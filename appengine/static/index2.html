@@ -1,0 +1,908 @@
+<html>
+<head>
+<style type="text/css">
+.aggregate td, .aggregate th, .tps td { white-space: nowrap; }
+.aggregate tr:nth-child(even) { background: #EEE; }
+.aggregate tr:nth-child(odd) { background: #FFF; }
+.aggregate tbody > tr:hover { background-color: #CCF; }
+#header { background-color: #CCC; }
+#header { cursor: pointer; }
+.aggregate td { padding: 2px 5px 2px 5px; font-family: verdana; font-size:11px; }
+.aggregate thead > tr > th { padding:0; margin:0; }
+.delta { font-size:9px; }
+.delta.complete {}
+.delta.incomplete { color: #888; }
+.aggregate tr.total td:first-child { text-align: right; }
+.aggregate tr.total td { background: #ccc; font-weight: bold; }
+.win { background-color: "lightgreen"; }
+.winmistake { background-color: "lightgreen"; color: "red"; }
+.lose { background-color: "lightpink"; }
+.losemistake { background-color: "lightpink"; }
+.mistake { background-color: "lightpink"; }
+.c1diff { border: 2px solid red; }
+.red { color: red; font-weight: bold }
+</style>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-52796581-1', 'auto');
+  ga('send', 'pageview');
+  if (top!=self) {
+    top.location.replace(document.location);
+    alert("Untuk alasan keamanan, kita tidak mengizinkan penggunaan IFrame; klik OK untuk keluar dari IFrame.")
+  }
+</script>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+<!-- <script src="jquery.min.js"></script> -->
+<script>
+var hie = [];
+var ids2names = {};
+var host = 'http://www.kawalpemilu.org';
+var THRESHOLD = 0.005;
+var COLUMN_ORDER = ['c', 'da', 'db', 'dc'];
+var SNIPPETS = ['h3', 'h4', 'hex'];
+var SHOW_IT = 0.95;
+
+function set_hie(depth, parent, opt_dontpush, opt_next) {
+  hie.length = depth + 1;
+  hie[depth] = parent;
+
+  if (depth == 4) {
+    display_tps(parent);
+  } else {
+    display_aggregate(parent, depth, opt_next);
+  }
+
+
+  var s = '<a href="javascript:set_hie(0, 0)">Nasional</a>';
+  for (var i = 1; i < hie.length; i++) {
+    s += ' &raquo; <a href="javascript:set_hie(' + i + ', ' + hie[i] + ')">' + ids2names[hie[i]] + '</a>';
+  }
+  $('#hie').html(s);
+  $('#hie2').html(s);
+  var ht = '0';
+  for (var i = 1; i <= depth; i++) {
+    ht = ht+'.'+hie[i];
+  }
+
+  if (!opt_dontpush) {
+    history.pushState(null, null, '#'+ht);
+    ga('send', 'screenview', {
+    'screenName': window.location.hash
+  });
+  }
+}
+
+function prefix_padd(num, cnt) {
+  num = num + '';
+  while (num.length < cnt) num = '0' + num;
+  return num;
+}
+
+function image_filename(p, t, h) {
+  return prefix_padd(p, 7) + prefix_padd(t, 3) + prefix_padd(h, 2);
+}
+
+function update_sum(tps_no) {
+  var prabowo = $('#input1_' + tps_no).val() || 0;
+  var jokowi = $('#input2_' + tps_no).val() || 0;
+  $('#input3_' + tps_no).val(parseInt(prabowo) + parseInt(jokowi));
+}
+
+function input_box() {
+  return 'Data belum dimasukkan.';
+}
+
+function gen_values(parent, reported_by, tps_no, prabowo, jokowi, valid, invalid, fbid) {
+  var err = '';
+  if (reported_by) {
+    err += '<br>Error reported';
+  } else {
+  var hash = (location.hash.length>0) ? location.hash.substr(1) : "";
+/*  err += "<br><a target=\"_blank\" href=\"https://docs.google.com/forms/d/1YT78OME0woe3MA2bjhLoaWFU3GRB1XKAC0WSTrS3Ap0/viewform?entry.523444839=" + hash
+         + "&entry.1914184921=" + parent +
+         "&entry.1875556460=" + ids2names[hie[3]] + "&entry.711131508=" + ids2names[hie[4]] + "&entry.875394862=" + tps_no + "&entry.475186929=\">Laporkan kesalahan</a>";*/
+  }
+  var dsah = valid - (prabowo + jokowi)
+  return '<table>' +
+    '<tr><td>Prabowo:<td id="tps_id1_' + tps_no + '">' + prabowo +
+    '<tr><td>Jokowi:<td id="tps_id2_' + tps_no + '">' + jokowi +
+    '<tr><td>Suara sah:<td id="tps_id3_' + tps_no + '" ' + (prabowo + jokowi == valid ? '' : 'bgcolor=magenta') +'>' + valid +
+      (dsah == 0 ? '' :
+        (' (' + (dsah < 0 ? '-' : '+') + Math.abs(dsah) + ')')
+      ) +
+    '<tr><td>Tidak sah:<td id="tps_id4_' + tps_no + '">' + invalid +
+//    '<tr><th colspan=2>' + err +
+  '</table>';
+}
+
+function gen_values3(tps_no, a1, a2, a3, a4, b1, b2, b3, b4, ii1, ii2, ii3, ii4, sts) {
+  var a5 = a1 + a2 + a3 + a4;
+  var b5 = b1 + b2 + b3 + b4;
+  return '<table>' +
+    '<tr><th colspan=2 align=left>Pemilih' +
+    '<tr><td>DPT:<td id="tps3a_id1_' + tps_no + '">' + a1 +
+    '<tr><td>DPTb:<td id="tps3a_id2_' + tps_no + '">' + a2 +
+    '<tr><td>DPK:<td id="tps3a_id3_' + tps_no + '">' + a3 +
+    '<tr><td>DPKTb:<td id="tps3a_id4_' + tps_no + '">' + a4 +
+    '<tr><td>Jumlah:<td id="tps3a_id5_' + tps_no + '">' + a5 +
+    '<tr><th colspan=2 align=left>Pengguna' +
+    '<tr><td>DPT:<td id="tps3b_id1_' + tps_no + '">' + b1 +
+    '<tr><td>DPTb:<td id="tps3b_id2_' + tps_no + '">' + b2 + ((b2 > a2) ? ' &nbsp; <b style="color:red">J3</b>' : '') +
+    '<tr><td>DPK:<td id="tps3b_id3_' + tps_no + '">' + b3 +
+    '<tr><td>DPKTb:<td id="tps3b_id4_' + tps_no + '">' + b4 + ((b4 > a4) ? ' &nbsp; <b style="color:red">J4</b>' : '') +
+    '<tr><td>Jumlah:<td id="tps3b_id5_' + tps_no + '">' + b5 + ((b5 != ii4 || (sts && b5 != sts)) ? ' &nbsp; <b style="color:red">J1</b>' : '') +
+    '<tr><th colspan=2 align=left>Uraian' +
+    '<tr><td>Diterima:<td id="tps3c_id1_' + tps_no + '">' + ii1 +
+    '<tr><td>Dikembalikan:<td id="tps3c_id2_' + tps_no + '">' + ii2 +
+    '<tr><td>Tak Terpakai:<td id="tps3c_id3_' + tps_no + '">' + ii3 +
+    '<tr><td>Digunakan:<td id="tps3c_id4_' + tps_no + '">' + ii4 +
+      (b5 != ii4? ' &nbsp; <b style="color:red">J1</b>' : '') +
+      ((sts && (ii4 != sts))? ' &nbsp; <b style="color:red">J2</b>' : '') +
+      (ii4 != ii1 - ii2 - ii3 ? ' &nbsp; <b style="color:red">J5</b>' : '') +
+  '</table>';
+}
+
+function display_tps(parent) {
+  $('#msg_status').html('Fetching ...');
+  $('#msg_status2').html('Fetching ...');
+  $.ajax(host + '/api/tps/' + parent, {
+    cache: false,
+    data: {},
+    dataType: "text", // expect back a text to sanitize errors.
+    error: function (xhr, status, error) {
+      console.log(status);
+      console.error(error);
+    },
+    success: function( data_txt ) {
+    $('#msg_status').html('');
+    $('#msg_status2').html('');
+    var data = JSON.parse(data_txt);
+    var s = '<table border="1" class="tps"><thead><tr>\
+      <th width="50">TPS\
+      <th class="h3" width="225">Halaman 3\
+      <th class="h3" width="225">Nilai Urun Daya\
+      <th class="h4" width="225">Halaman 4\
+      <th class="h4" width="225">Nilai Urun Daya\
+      <th class="hex" width="225">Halaman 1\
+      <th class="hex" width="225">Halaman 2\
+      <th class="hex" width="225">Halaman 5\
+    </thead><tbody>';
+    var tps_pending = 0;
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      var tps_no = i + 1;
+      var is_pending = !r[2] && !r[3] && !r[4] && !r[5];
+      var has_scan = r[6];
+      var has_error = (r[7] == '0') ? false : r[7];
+      var entered_by = r[8];
+      var is_pending3 = !r[10];
+      var num1 = image_filename(parent, tps_no, 1);
+      var num2 = image_filename(parent, tps_no, 2);
+      var num3 = image_filename(parent, tps_no, 3);
+      var num4 = image_filename(parent, tps_no, 4);
+      var num5 = image_filename(parent, tps_no, 5);
+      if (is_pending && !tps_pending) tps_pending = tps_no;
+      s += '<tr bgcolor=' + (has_error ? '#ffaaaa' : '') + '><td>#' + r[0] +
+        '<td class="h3"><a href="http://scanc1.kpu.go.id/viewp.php?f=' + num3 +
+          '.jpg" target="_blank"><div style="width: 200px; height: 420px; overflow: hidden;">' +
+        '<img class="h3img" id="h3img' + i + '" style="position: relative; left: -450px; top: -100px;" width="600" src="" rsrc="http://scanc1.kpu.go.id/viewp.php?f=' + num3 + '.jpg"></div></a>' +
+        '<td class="h3" align=center id="csval_'+ tps_no +'">' +
+          (is_pending3 ? input_box() : gen_values3(tps_no, r[10], r[11], r[12], r[13], r[14], r[15], r[16], r[17], r[18], r[19], r[20], r[21], r[4] + r[5])) +
+        '<td class="h4"><a href="http://scanc1.kpu.go.id/viewp.php?f=' + num4 +
+          '.jpg" target="_blank"><div style="width: 200px; height: 420px; overflow: hidden;">' +
+        '<img class="h4img" id="h4img' + i + '" style="position: relative; left: -450px; top: -100px;" width="600" src="" rsrc="http://scanc1.kpu.go.id/viewp.php?f=' + num4 + '.jpg"></div></a>' +
+        '<td class="h4" align=center id="csval_'+ tps_no +'">' +
+          (is_pending ? input_box() : gen_values(parent, has_error, tps_no, r[2], r[3], r[4], r[5], entered_by)) +
+        '<td class="hex"><a href="http://scanc1.kpu.go.id/viewp.php?f=' + num1 +
+          '.jpg" target="_blank"><div style="width: 200px; height: 420px; overflow: hidden;">' +
+        '<img class="heximg" id="heximg1' + i + '" style="position: relative; left: -450px; top: -100px;" width="600" src="" rsrc="http://scanc1.kpu.go.id/viewp.php?f=' + num1 + '.jpg"></div></a>' +
+        '<td class="hex"><a href="http://scanc1.kpu.go.id/viewp.php?f=' + num2 +
+          '.jpg" target="_blank"><div style="width: 200px; height: 420px; overflow: hidden;">' +
+        '<img class="heximg" id="heximg2' + i + '" style="position: relative; left: -450px; top: -100px;" width="600" src="" rsrc="http://scanc1.kpu.go.id/viewp.php?f=' + num2 + '.jpg"></div></a>' +
+        '<td class="hex"><a href="http://scanc1.kpu.go.id/viewp.php?f=' + num5 +
+          '.jpg" target="_blank"><div style="width: 200px; height: 420px; overflow: hidden;">' +
+        '<img class="heximg" id="heximg5' + i + '" style="position: relative; left: -450px; top: -100px;" width="600" src="" rsrc="http://scanc1.kpu.go.id/viewp.php?f=' + num5 + '.jpg"></div></a>'
+        ;
+    }
+    $( '#tbl' ).html( s + '</tbody></table>' );
+    updateColumnsTPS();
+    }
+  });
+}
+
+function disp_percent(rat) {
+  return percent(rat).replace(/\./, ',') + "%";
+}
+
+function disp_delta(i) {
+  if (i < 0) return "-" + format(Math.abs(i));
+  else if (i > 0) return "+" + format(Math.abs(i));
+  return i;
+}
+
+function disp_delta_percent(rat) {
+  if (isNaN(rat)) return '0,00';
+  var p = percent(Math.abs(rat)).replace(/\./, ',');
+  if (rat < -1e-4) return "-" + p + "%";
+  else if (rat > 1e-4) return "+" + p + "%";
+  return p + "%";
+}
+
+function percent(rat) {
+  if (isNaN(rat)) return '0.00';
+  var p = Math.round(rat * 10000);
+  return Math.floor(p / 100) + '.' + prefix_padd(p % 100, 2);
+}
+
+function replace_char(s, index, ch) {
+  return s.substr(0, index) + ch + s.substr(index + 1);
+}
+
+function format(number) {
+  if (number == 0) return '0';
+  var nres = '' + number;
+  var res = '';
+  for (var i =0; i< nres.length;i++) {
+    if (i > 0 && i%3 == 0) {
+      res = '.' + res;
+    }
+    res = nres[nres.length-i-1] + res;
+  }
+  return res;
+}
+
+var allData = {};
+var dataRetrieved = [ false, false, false ];
+var C1DATA = 0;
+var DABCDATA = 1;
+var PPLNDATA = 2;
+
+function display_recap(prefix, highlight, regionName) {
+  var pos = 0;
+  for (var i = 0; i < COLUMN_ORDER.length; i++) {
+  if (COLUMN_ORDER[i]==prefix) {
+    pos = i;
+    break;
+    }
+  }
+
+  var children = prefix + 'Children';
+
+  // indices
+  var ID = 0;
+  var NAMA = 1;
+  var NO1 = 2;
+  var NO2 = 3;
+  var TOTAL = 4;
+  // only for recap
+  var PRESENTASE = 5;
+  var DONE = 6;
+  var TO_BE_DONE = 7;
+
+  // children
+  for (var i = 0; i < allData[children].length; i++) {
+    var row = allData[children][i];
+    var complete = prefix == 'dc' || row[DONE] == row[TO_BE_DONE];
+    if (row[TOTAL] > 0) { // entered
+      var percentCur = [ row[NO1] / row[TOTAL], row[NO2] / row[TOTAL]];
+      var pbcs = format(row[NO1]);
+      var pbps = disp_percent(percentCur[0]);
+      var jkcs = format(row[NO2]);
+      var jkps = disp_percent(percentCur[1]);
+      for (var k = 0; k < pos; k++) {
+        var prevIdx = -1;
+        prevChildren = COLUMN_ORDER[k] + 'Children';
+        for (var j = 0; j < allData[prevChildren].length; j++) {
+          if (allData[prevChildren][j][ID] == row[ID]) {
+            prevIdx = j;
+            break;
+          }
+          }
+
+        var diff;
+        var absDiff;
+        var rowPrev = allData[prevChildren][prevIdx];
+        var percentPrev = [rowPrev[NO1] / rowPrev[TOTAL], rowPrev[NO2] / rowPrev[TOTAL]];
+        if (prevIdx == -1 || rowPrev[TOTAL] == 0) { // WHAT!!
+          diff = [percentCur[0], percentCur[1]];
+          absDiff = [row[NO1], row[NO2]];
+        } else {
+          diff = [percentCur[0] - percentPrev[0], percentCur[1] - percentPrev[1]];
+          absDiff = [row[NO1] - rowPrev[NO1], row[NO2] - rowPrev[NO2]];
+        }
+        var pbpsHigh = (highlight && (rowPrev[TOTAL] == 0 || Math.abs(diff[0]) >= THRESHOLD)) ? "red" : '';
+        var jkpsHigh = (highlight && (rowPrev[TOTAL] == 0 || Math.abs(diff[1]) >= THRESHOLD)) ? "red" : '';
+
+        var pairTag = 'delta-' + COLUMN_ORDER[k] + '-' + prefix;
+        pbcs = pbcs + '<div class="delta ' + pairTag + ' ' + (complete?'complete':'incomplete')+'">(' + disp_delta(absDiff[0]) + ')</div>';
+        pbps = pbps + '<div class="delta ' + pairTag + ' ' + pbpsHigh + '">(' + disp_delta_percent(diff[0]) + ')</div>';
+        jkcs = jkcs + '<div class="delta ' + pairTag + ' ' + (complete?'complete':'incomplete')+'">(' + disp_delta(absDiff[1]) + ')</div>';
+        jkps = jkps + '<div class="delta ' + pairTag + ' ' + jkpsHigh + '">(' + disp_delta_percent(diff[1]) + ')</div>';
+
+      }
+
+      if (row[NO1] > row[NO2]) {
+        $('#' + prefix + '_pb_p_'+row[ID]).css('background-color', "lightgreen");
+      }
+      if (row[NO1] < row[NO2]) {
+        $('#' + prefix + '_jk_p_'+row[ID]).css('background-color', "lightgreen");
+      }
+
+      $('#' + prefix + '_pb_c_'+row[ID])
+        .html(pbcs)
+        .data('sort', row[NO1]);
+
+      $('#' + prefix + '_pb_p_'+row[ID])
+        .html(pbps)
+        .data('sort', percentCur[0]);
+
+      $('#' + prefix + '_jk_c_'+row[ID])
+        .html(jkcs)
+        .data('sort', row[NO2]);
+
+      $('#' + prefix + '_jk_p_'+row[ID])
+        .html(jkps)
+        .data('sort', percentCur[1]);
+
+      if (document.getElementById(prefix + '_p_' + row[ID])) {
+        $('#' + prefix + '_p_' + row[ID]).text(disp_percent(row[PRESENTASE]))
+          .data('sort', row[PRESENTASE]);
+        $('#' + prefix + '_p_' + row[ID]).attr('title', row[DONE] + ' ' + regionName +' dari ' + row[TO_BE_DONE]);
+        if (complete) {
+          $('#' + prefix + '_p_' + row[ID]).css('background', "lightgreen");
+        }
+      }
+    }
+  }
+
+  // ppln
+  if (prefix == "dc" && "ppln" in allData) {
+    allData[prefix][NO1] += allData["ppln"]["total"][6];
+    allData[prefix][NO2] += allData["ppln"]["total"][7];
+    allData[prefix][TOTAL] += allData["ppln"]["total"][6] + allData["ppln"]["total"][7];
+  }
+
+  // aggregate
+  var row = allData[prefix];
+  var complete = (row[DONE] == row[TO_BE_DONE]);
+  if (row[TOTAL] > 0) {
+    $('.' + prefix + '_pb_ct').text(format(row[NO1]))
+      .data('sort', row[NO1]/row[TOTAL]);
+    $('.' + prefix + '_pb_pt').text(disp_percent(row[NO1]/row[TOTAL]))
+      .data('sort', row[NO1]/row[TOTAL]);
+    if (row[NO1]>row[NO2]){
+      $('.' + prefix + '_pb_pt').css('background-color', "lightgreen");
+    }
+    $('.' + prefix + '_jk_ct').text(format(row[NO2]))
+      .data('sort', row[NO2]/row[TOTAL]);
+    $('.' + prefix + '_jk_pt').text(disp_percent(row[NO2]/row[TOTAL]))
+      .data('sort', row[NO2]/row[TOTAL]);
+    if (row[NO2]>row[NO1]){
+      $('.' + prefix + '_jk_pt').css('background-color', "lightgreen");
+    }
+    if ($('.' + prefix + '_pt').length) {
+      $('.' + prefix + '_pt').text(disp_percent(row[PRESENTASE]));
+      $('.' + prefix + '_pt').attr('title', format(row[DONE]) + ' ' + regionName +' dari ' + format(row[TO_BE_DONE]));
+      if (complete) {
+        $('.' + prefix + '_pt').addClass("win"); // css('background', "lightgreen");
+      }
+    }
+  }
+}
+
+var sortState = [1, 1];
+
+function sort(i) {
+  var trs = $('table tr.datarow');
+  var tds = $(trs[0]).find('td');
+  var idx = 0;
+  for (var j=0; j<tds.length; j++) {
+    if ($(tds[j]).data('sort-index') == i) {
+      idx = j + 1;
+      break;
+    }
+  }
+
+  var mul = 1;
+  if (sortState[0] === idx)
+    mul = sortState[1] * -1;
+  sortState = [idx, mul];
+
+  trs.sort(function(a, b) {
+    var ka = $(a).find('td:nth-child('+idx+')').data('sort');
+    var kb = $(b).find('td:nth-child('+idx+')').data('sort');
+    if (!ka && !kb) return 0 * mul;
+    if (!ka && !!kb) return -1 * mul;
+    if (!!ka && !kb) return 1 * mul;
+    if (!!ka.localeCompare) return ka.localeCompare(kb) * mul;
+    return (ka - kb) * mul;
+  });
+  $(trs).detach();
+  $(trs).insertAfter($($('table tr.total')[0]));
+}
+
+function get_c1(parent, depth, opt_next) {
+  $.ajax(host + '/api/children/' + parent, {
+    cache: false,
+    data: {},
+    dataType: "text", // expect back a text to sanitize errors.
+    error: function (xhr, status, error) {
+      console.log(status);
+      console.error(error);
+    },
+    success: function( data_txt ) {
+      // BUG
+      var x = data_txt.indexOf("PALENGA'\"AN");
+      if (x != -1) data_txt = replace_char(data_txt, x + 8, '\'');
+      x = data_txt.indexOf("RA'\"AS");
+      if (x != -1) data_txt = replace_char(data_txt, x + 3, '\'');
+      var data = JSON.parse(data_txt);
+      allData['cChildren'] = data;
+      dataRetrieved[C1DATA] = true;
+      real_display(parent, depth, opt_next);
+    }
+  });
+}
+
+function get_dabc(parent, depth, opt_next) {
+  $.ajax(host + '/da1x/' + parent, {
+    cache: false,
+    data: {},
+    dataType: "text", // expect back a text to sanitize errors.
+    error: function (xhr, status, error) {
+      console.log(status);
+      console.error(error);
+    },
+    success: function( data_txt ) {
+      var data = JSON.parse(data_txt);
+      if ('da1' in data) {
+        allData['da'] = data['da1'];
+        allData['daChildren'] = data['children_da1'];
+      }
+      if ('db1' in data) {
+        allData['db'] = data['db1'];
+        allData['dbChildren'] = data['children_db1'];
+      }
+      if ('dc1' in data) {
+        allData['dc'] = data['dc1'];
+        allData['dcChildren'] = data['children_dc1'];
+      }
+      dataRetrieved[DABCDATA] = true;
+      real_display(parent, depth, opt_next);
+    }
+  });
+}
+
+function display_aggregate(parent, depth, opt_next) {
+  $('#msg_status').html('Fetching ...');
+  $('#msg_status2').html('Fetching ...');
+
+  dataRetrieved = [false, false, false];
+
+  get_c1(parent, depth, opt_next);
+  get_dabc(parent, depth, opt_next);
+}
+
+function real_display(parent, depth, opt_next) {
+  if (dataRetrieved[C1DATA] &&
+      dataRetrieved[DABCDATA]) {
+    $('#msg_status').html('');
+    $('#msg_status2').html('');
+    var data = 0;
+    var wda1 = depth < 4;
+    var wdb1 = depth < 3;
+    var wdc1 = depth < 2;
+    var wdd1 = depth < 1;
+
+    data = allData['cChildren'];
+    var table = $('<table class="aggregate">');
+    var tr = $('<tr class="header" id="header" bgcolor="#DDDDDD">\
+      <th onclick="sort(0)" width="40">No\
+      <th onclick="sort(1)" width="225">Tempat\
+      <th onclick="sort(2)" width="120" class="c1" colspan="2">Prabowo-Hatta<br>(C1)' +
+      (wda1 ? '<th onclick="sort(3)" width="120" class="da1" colspan="2">Prabowo-Hatta<br>(DA1)' : '')      +
+      (wdb1 ? '<th onclick="sort(4)" width="120" class="db1" colspan="2">Prabowo-Hatta<br>(DB1)' : '')      +
+      (wdc1 ? '<th onclick="sort(5)" width="120" class="dc1" colspan="2">Prabowo-Hatta<br>(DC1)' : '')      +
+      '<th onclick="sort(6)" width="120" class="c1" colspan="2">Jokowi-JK<br>(C1)' +
+      (wda1 ? '<th onclick="sort(7)" width="120" class="da1" colspan="2">Jokowi-JK<br>(DA1)' : '') +
+      (wdb1 ? '<th onclick="sort(8)" width="120" class="db1" colspan="2">Jokowi-JK<br>(DB1)' : '') +
+      (wdc1 ? '<th onclick="sort(9)" width="120" class="dc1" colspan="2">Jokowi-JK<br>(DC1)' : '') +
+      '<th onclick="sort(10)" class="c1" width="70">Suara sah\
+      <th onclick="sort(11)" class="c1" width="70">Tidak sah\
+      <th onclick="sort(12)" class="j1" width="150">Janggal #1 <br/> #TPS / Suara\
+      <th onclick="sort(13)" class="j2" width="150">Janggal #2 <br/> #TPS / Suara\
+      <th onclick="sort(14)" class="j3" width="150">Janggal #3 <br/> #TPS / Suara\
+      <th onclick="sort(15)" class="j4" width="150">Janggal #4 <br/> #TPS / Suara\
+      <th onclick="sort(16)" class="j5" width="150">Janggal #5 <br/> #TPS / Suara\
+      <th onclick="sort(17)" class="n1" width="150">PH Nol<br/> #TPS\
+      <th onclick="sort(18)" class="n2" width="150">JJ Nol<br/> #TPS\
+      <th onclick="sort(19)" class="c1" width="70">B2 DPTb\
+      <th onclick="sort(20)" class="c1" width="70">B2 DPKTb\
+      <th onclick="sort(21)" class="c1" width="70">Surat suara<br/>Tersedia\
+      <th onclick="sort(22)" class="c1" width="70">Surat suara<br/>Tak terpakai\
+      <th onclick="sort(23)" class="c1" width="70">Surat suara<br/>terpakai\
+      <th onclick="sort(24)" class="j6" width="70">Janggal #6 <br/> Suara\
+      <th onclick="sort(25)" class="c1" width="70">C1 Hal. 3<br/>input salah\
+      <th onclick="sort(26)" class="c1" width="70">C1 Hal. 3<br/>terdata\
+      <th onclick="sort(27)" class="c1" width="70">C1 Hal. 4<br/>input salah\
+      <th onclick="sort(28)" class="c1" width="70">C1 Hal. 4<br/>terdata'+
+      (wdc1 ? '<th onclick="sort(29)" class="da1" width="60">DA1%' : '') +
+      (wdd1 ? '<th onclick="sort(30)" class="db1" width="60">DB1%' : '') +
+    '</tr>');
+    table.append(tr);
+
+    var total = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+//    console.log(data);
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      var prabowo_count = r[2];
+      var jokowi_count = r[3];
+      var valid_count = r[4];
+      var invalid_count = r[5];
+      var errors_count = r[6];
+      var entered_count = r[7];
+      var pending_count = r[8];
+      var tps_count = r[9];
+      var dsah = valid_count - (prabowo_count + jokowi_count);
+      var prabowo_percent = disp_percent(prabowo_count / (prabowo_count + jokowi_count));
+      var jokowi_percent = disp_percent(jokowi_count / (prabowo_count + jokowi_count));
+      var entered3 = r[17];
+      var errors3 = r[18];
+      var recentlyChanged = (Math.round(new Date().getTime() / 1000) - r[23]) <= 60 * 30; // last 30 minutes
+      for (var j = 2; j <= 39; j++) total[j] += r[j];
+      var x1 = Math.abs(r[36] - (r[37] + r[38]) - (r[4] + r[5]));
+      total[40] += x1;
+      var done3 = (entered3 >= tps_count * SHOW_IT);
+      if (!done3) {
+        for (var j = 13; j <= 16; j++) total[j] -= r[j];
+        for (var j = 19; j <= 22; j++) total[j] -= r[j];
+        for (var j = 24; j <= 39; j++) total[j] -= r[j];
+        total[40] -= x1;
+      }
+
+      ids2names[r[0]] = r[1];
+      var sort_of_done_entered = (percent(entered_count / tps_count) >= 99) ? 'bgcolor=lightgreen' : '';
+      var sort_of_done_available = (percent(pending_count / tps_count) >= 99) ? 'bgcolor=lightgreen' : '';
+      var done_entered3 = (done3) ? 'bgcolor=lightgreen' : '';
+      tr = $('<tr class="datarow" id="row' + i + '"><td align=center data-sort-index="0" data-sort="'+i+'">' + (i + 1) +
+        '<td data-sort-index="1" ' + (recentlyChanged ? 'bgcolor="yellow" ' : '') + 'data-sort="'+r[1]+'"><a href="javascript:set_hie(' + (depth + 1) + ',' + r[0] +')">' + r[1] + '</a>' +
+        '<td data-sort-index="2" data-sort="'+prabowo_count+'" align=right width=60 class="c1">' + format(prabowo_count) +
+        '<td data-sort-index="2" data-sort="'+prabowo_count+'" align=right class="c1" ' + (prabowo_count > jokowi_count ? "bgcolor=lightgreen" : "") + '>' + prabowo_percent +
+        (wda1 ? '<td data-sort-index="3" align=right class="da1" id="da_pb_c_' + r[0] + '"></td><td align=right class="da1" id="da_pb_p_' + r[0] + '"></td>' : '') +
+        (wdb1 ? '<td data-sort-index="4" align=right class="db1" id="db_pb_c_' + r[0] + '"></td><td align=right class="db1" id="db_pb_p_' + r[0] + '"></td>' : '') +
+        (wdc1 ? '<td data-sort-index="5" align=right class="dc1" id="dc_pb_c_' + r[0] + '"></td><td align=right class="dc1" id="dc_pb_p_' + r[0] + '"></td>' : '') +
+        '<td data-sort-index="6" data-sort="'+jokowi_count+'" align=right class="c1" width=60>' + format(jokowi_count) +
+        '<td data-sort-index="6" data-sort="'+jokowi_count+'" align=right class="c1" ' + (prabowo_count < jokowi_count ? "bgcolor=lightgreen" : "") + '>' + jokowi_percent +
+        (wda1 ? '<td data-sort-index="7" align=right class="da1" id="da_jk_c_' + r[0] + '"></td><td align=right class="da1" id="da_jk_p_' + r[0] + '"></td>' : '') +
+        (wdb1 ? '<td data-sort-index="8" align=right class="db1" id="db_jk_c_' + r[0] + '"></td><td align=right class="db1" id="db_jk_p_' + r[0] + '"></td>' : '') +
+        (wdc1 ? '<td data-sort-index="9" align=right class="dc1" id="dc_jk_c_' + r[0] + '"></td><td align=right class="dc1" id="dc_jk_p_' + r[0] + '"></td>' : '') +
+        '<td class="c1" data-sort-index="10" data-sort="'+valid_count+'" align=right ' + (dsah != 0 ? "bgcolor=lightpink" : "") + '>' + format(valid_count) +
+           (dsah != 0 ? (' <br> <span class="delta">(' + disp_delta(dsah) + ') </span>') : "") +
+        '<td class="c1" data-sort-index="11" data-sort="'+invalid_count+'" align=right>' + format(invalid_count) +
+        ( done3 ?
+          '<td data-sort-index="12" class="j1" data-sort="' + r[19] + '" align=right' + (r[13] ? ' bgcolor="lightpink"' : '') +  '>' + format(r[13]) + ' / ' +  format(r[19]) +
+          '<td data-sort-index="13" class="j2" data-sort="' + r[20] + '" align=right' + (r[14] ? ' bgcolor="lightpink"' : '') +  '>' + format(r[14]) + ' / ' + format(r[20]) +
+          '<td data-sort-index="14" class="j3" data-sort="' + r[21] + '" align=right' + (r[15] ? ' bgcolor="lightpink"' : '') +  '>' + format(r[15]) + ' / ' + format(r[21]) +
+          '<td data-sort-index="15" class="j4" data-sort="' + r[22] + '" align=right' + (r[16] ? ' bgcolor="lightpink"' : '') +  '>' + format(r[16]) + ' / ' + format(r[22]) +
+          '<td data-sort-index="16" class="j5" data-sort="' + r[34] + '" align=right' + (r[33] ? ' bgcolor="lightpink"' : '') +  '>' + format(r[33]) + ' / ' + format(r[34]) +
+          '<td data-sort-index="17" class="n1" data-sort="' + r[32] + '" align=right' + (r[32] ? ' bgcolor="lightpink"' : '') +  '>' + format(r[32]) +
+          '<td data-sort-index="18" class="n2" data-sort="' + r[35] + '" align=right' + (r[35] ? ' bgcolor="lightpink"' : '') +  '>' + format(r[35]) +
+          '<td data-sort-index="19" class="c1" data-sort="' + r[29] + '" align=right' + (r[29] ? ' bgcolor="lightpink"' : '') +  '>' + format(r[29]) +
+          '<td data-sort-index="20" class="c1" data-sort="' + r[31] + '" align=right' + (r[31] ? ' bgcolor="lightpink"' : '') +  '>' + format(r[31]) +
+          '<td data-sort-index="21" class="c1" data-sort="' + r[36] + '" align=right>' + format(r[36]) +
+          '<td data-sort-index="22" class="c1" data-sort="' + (r[37] + r[38]) + '" align=right>' + format(r[37] + r[38]) +
+          '<td data-sort-index="23" class="c1" data-sort="' + r[39] + '" align=right>' + format(r[39]) +
+          '<td data-sort-index="24" class="j6" data-sort="' + x1 + '" align=right' + (x1 ? ' bgcolor="lightpink"' : '') +  '>' + format(x1)
+          :
+          '<td data-sort-index="12" class="j1" data-sort="0" align=right> ----- / -----' +
+          '<td data-sort-index="13" class="j2" data-sort="0" align=right> ----- / -----' +
+          '<td data-sort-index="14" class="j3" data-sort="0" align=right> ----- / -----' +
+          '<td data-sort-index="15" class="j4" data-sort="0" align=right> ----- / -----' +
+          '<td data-sort-index="16" class="j5" data-sort="0" align=right> ----- / -----' +
+          '<td data-sort-index="17" class="n1" data-sort="0" align=right> -----' +
+          '<td data-sort-index="18" class="n2" data-sort="0" align=right> -----' +
+          '<td data-sort-index="19" class="c1" data-sort="0" align=right> -----' +
+          '<td data-sort-index="20" class="c1" data-sort="0" align=right> -----' +
+          '<td data-sort-index="21" class="c1" data-sort="0" align=right> -----' +
+          '<td data-sort-index="22" class="c1" data-sort="0" align=right> -----' +
+          '<td data-sort-index="23" class="c1" data-sort="0" align=right> -----' +
+          '<td data-sort-index="24" class="j6" data-sort="0" align=right> -----'
+        ) +
+
+        '<td data-sort-index="25" class="c1" data-sort="'+(errors3/tps_count)+'" align=right ' + (errors3 != 0 ? "bgcolor=lightpink" : "") + ' title="' + format(errors3) + " TPS dari " + format(tps_count) + '">' + disp_percent(errors3 / tps_count) +
+        '<td data-sort-index="26" class="c1" data-sort="'+(entered3/tps_count)+'" align=right ' + done_entered3 +' title="' + format(entered3) + ' TPS dari ' + format(tps_count) + '">' + disp_percent(entered3 / tps_count) +
+        '<td data-sort-index="27" class="c1" data-sort="'+(errors_count/tps_count)+'" align=right ' + (errors_count != 0 ? "bgcolor=lightpink" : "") + ' title="' + format(errors_count) + " TPS dari " + format(tps_count) + '">' + disp_percent(errors_count / tps_count) + // format(errors_count) +
+        '<td data-sort-index="28" class="c1" data-sort="'+(entered_count/tps_count)+'" align=right ' + sort_of_done_entered +' title="' + format(entered_count) + ' TPS dari ' + format(tps_count) + '">' +
+           disp_percent(entered_count / tps_count) +
+        (wdc1 ? '<td data-sort-index="29" align=right class="da1" id="da_p_' + r[0] + '"></td>' : '') +
+        (wdd1 ? '<td data-sort-index="30" align=right class="db1" id="db_p_' + r[0] + '"></td>' : '') +
+        '</tr>');
+      table.append(tr);
+    }
+
+    // total
+    var prabowo_count = total[2];
+    var jokowi_count = total[3];
+    var valid_count = total[4];
+    var invalid_count = total[5];
+    var errors_count = total[6];
+    var entered_count = total[7];
+    var pending_count = total[8];
+    var tps_count = total[9];
+    var dsah = valid_count - (prabowo_count + jokowi_count);
+    var prabowo_percent = disp_percent(prabowo_count / (prabowo_count + jokowi_count));
+    var jokowi_percent = disp_percent(jokowi_count / (prabowo_count + jokowi_count));
+    var entered3 = total[17];
+    var errors3 = total[18];
+    var trTotal = $('<tr class="total"><td colspan="2">TOTAL</td>' +
+      '<td align=right class="c1" width=60>' + format(prabowo_count) +
+      '<td align=right class="c1pbp c1' + (prabowo_count > jokowi_count ? " win" : "") + '">' + prabowo_percent +
+              (wda1 ? '<td align=right class="da1 da_pb_ct"><td align=right class="da1 da_pb_pt">' : '') +
+              (wdb1 ? '<td align=right class="db1 db_pb_ct"><td align=right class="db1 db_pb_pt">' : '') +
+              (wdc1 ? '<td align=right class="dc1 dc_pb_ct"><td align=right class="dc1 dc_pb_pt">' : '') +
+      '<td align=right class="c1" width=60>' + format(jokowi_count) +
+      '<td align=right class="c1jkp c1' + (prabowo_count < jokowi_count ? ' win' : '') + '">' + jokowi_percent +
+              (wda1 ? '<td align=right class="da1 da_jk_ct"><td align=right class="da1 da_jk_pt">' : '') +
+              (wdb1 ? '<td align=right class="db1 db_jk_ct"><td align=right class="db1 db_jk_pt">' : '') +
+              (wdc1 ? '<td align=right class="dc1 dc_jk_ct"><td align=right class="dc1 dc_jk_pt">' : '') +
+      '<td class="c1" align=right ' + (dsah != 0 ? 'class="mistake"' : "") + '>' + format(valid_count) +
+           (dsah != 0 ? ' <br> <span class="delta">(' + disp_delta(dsah) + ')</span>': '') +
+      '<td class="c1" align=right>' + format(invalid_count) +
+      '<td class="j1" align=right>' + format(total[13]) + ' / ' + format(total[19]) +
+      '<td class="j2" align=right>' + format(total[14]) + ' / ' + format(total[20]) +
+      '<td class="j3" align=right>' + format(total[15]) + ' / ' + format(total[21]) +
+      '<td class="j4" align=right>' + format(total[16]) + ' / ' + format(total[22]) +
+      '<td class="j5" align=right>' + format(total[33]) + ' / ' + format(total[34]) +
+      '<td class="n1" align=right>' + format(total[32]) +
+      '<td class="n2" align=right>' + format(total[35]) +
+      '<td class="c1" align=right>' + format(total[29]) +
+      '<td class="c1" align=right>' + format(total[31]) +
+      '<td class="c1" align=right>' + format(total[36]) +
+      '<td class="c1" align=right>' + format(total[37] + total[38]) +
+      '<td class="c1" align=right>' + format(total[39]) +
+      '<td class="j6" align=right>' + format(total[40]) +
+      '<td align=right class="c1" ' + (errors3 != 0 ? 'class="mistake"' : "") + ' title="' + format(errors3) + " TPS dari " + format(tps_count) + '">' + disp_percent(errors3 / tps_count) +
+      '<td align=right class="c1" ' + sort_of_done_entered +' title="' + format(entered3) + ' TPS dari ' + format(tps_count) + '">' +
+         disp_percent(entered3 / tps_count) +
+      '<td align=right class="c1" ' + (errors_count != 0 ? 'class="mistake"' : "") + ' title="' + format(errors_count) + " TPS dari " + format(tps_count) + '">' + disp_percent(errors_count / tps_count) +
+      '<td align=right class="c1" ' + sort_of_done_entered +' title="' + format(entered_count) + ' TPS dari ' + format(tps_count) + '">' +
+         disp_percent(entered_count / tps_count) +
+              (wdc1 ? '<td align=right class="da1 da_pt"></td>' : '') +
+              (wdd1 ? '<td align=right class="db1 db_pt"></td>' : '') +
+      '</tr>');
+    table.append(trTotal);
+    trTotal.clone().insertAfter(table.find('.header'));
+    allData['c'] = total;
+
+    if (opt_next && opt_next()) {
+       // Do nothing
+    } else {
+      $('#tbl').empty();
+      $('#tbl').append(table);
+
+      updateColumns();
+      sortState = [1, 1];
+    }
+    var regionName = ['propinsi', 'kabupaten/kota', 'kecamatan', 'kelurahan', 'tps'];
+    if (wda1) display_recap('da', depth >= 2, regionName[2]);
+    if (wdb1) display_recap('db', depth >= 1, regionName[1]);
+    if (wdc1) display_recap('dc', depth >= 0, regionName[0]);
+    updateDelta();
+
+    // Hajar bleh!
+    if (prabowo_count > jokowi_count) {
+        $('.c1pbp').css('background-color', "lightgreen");
+    } else if (prabowo_count < jokowi_count) {
+        $('.c1jkp').css('background-color', "lightgreen");
+    }
+  }
+}
+
+function updatePos(opt_pos) {
+  if (location.hash == "") {
+    set_hie(0, 0);
+    return false;
+  }
+  var hies = location.hash.substr(1).split('.');
+  if (opt_pos >= hies.length) {
+    return false;
+  }
+  for (var i = opt_pos; i+1 < hies.length; i++) {
+    if (hie.length <= i || hie[i] != hies[i-0]) {
+      set_hie(i, hies[opt_pos], true, function() { return updatePos(i+1);});
+      return true;
+    }
+  }
+  set_hie(hies.length-1, hies[hies.length-1], true, function() { return false;});
+  return true;
+}
+
+function reload() {
+ nest = location.hash != "";
+  if (nest) {
+   updatePos(0);
+  ga('send', 'screenview', {
+    'screenName': window.location.hash
+  });
+  } else
+    set_hie(0, 0);
+}
+
+$(function () {
+  reload();
+})
+
+function updateColumns() {
+  var dd = ['c1', 'da1', 'db1', 'dc1', 'j1', 'j2', 'j3', 'j4', 'j5', 'j6', 'n1', 'n2'];
+//  var dd = ['c1', 'da1', 'db1', 'dc1', 'j1', 'j2', 'j3', 'j4', 'j5'];
+  for (var i=0; i<dd.length; i++) toggle(dd[i], true);
+  updateDelta();
+}
+
+function updateColumnsTPS() {
+  var dd = ['h3', 'h4', 'hex'];
+  for (var i = 0; i < dd.length; i++) {
+    toggleTPS(dd[i]);
+  }
+}
+
+function toggleTPS(d) {
+  var cb = $('#cb-' + d);
+  var el = $('.' + d);
+  if (cb.is(':checked')) {
+    el.show();
+    var y = [];
+    if (d == 'hex')
+      y = [d + 'img1', d + 'img2', d + 'img5'];
+    else
+      y = [d + 'img'];
+    for (var i = 0; i < y.length; i++)
+    {
+      for (var j = 0; j < 500; j++) {
+        var x = $('#' + y[i] + j);
+        if (x.length)
+          x.attr('src', x.attr('rsrc'));
+        else
+          break;
+      }
+    }
+  }
+  else el.hide();
+}
+
+function updateDelta() {
+  var dd = ['c1', 'da1', 'db1', 'dc1'];
+  var isOn = [];
+  for (var i = 0; i < 4; i++) {
+    isOn.push($('#cb-' + dd[i]).is(':checked'));
+    for (var j = 0; j < 4; j++) {
+      $('.delta-' + COLUMN_ORDER[i] + '-' + COLUMN_ORDER[j]).hide();
+    }
+  }
+  for (var i = 1; i < 4; i++) {
+    if (isOn[i])
+      for (var j = i-1; j>=0; j--) {
+        if (isOn[j]) {
+          $('.delta-' + COLUMN_ORDER[j] + '-' + COLUMN_ORDER[i]).show();
+          break;
+        }
+      }
+  }
+}
+
+function toggle(d, opt_dontUpdateDelta) {
+  var cb = $('#cb-' + d);
+  var el = $('.' + d);
+  if (cb.is(':checked')) {
+    el.show();
+  }
+  else el.hide();
+  if (!opt_dontUpdateDelta)
+    updateDelta();
+}
+
+window.onhashchange = reload;
+</script>
+<title>Kawal Pemilu 2014</title>
+
+</head>
+
+<body>
+Bergabung bersama kami bersama-sama kita Kawal Pemilu 2014!
+<br>
+Kunjungi <a target="_blank" href="https://www.facebook.com/pages/Kawal-Pemilu-2014/1452601258341836">Facebook Page Kawal Pemilu 2014</a> dan bantu kami melaporkan masalah data!
+<a target="_blank" href="https://twitter.com/share" class="twitter-share-button" data-url="http://www.kawalpemilu.org" data-text="Mari berpartisipasi mengawal pemilu bersama" data-hashtags="kawalpemilu">Tweet</a>
+<script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+<br><br>
+Halaman ini khusus untuk memperlihatkan hasil urun daya untuk halaman 3 dan 4 formulir C1.
+<a href="/">Klik untuk kembali ke halaman utama</a>.
+<br>
+Bukalah halaman ini menggunakan peramban (browser) modern seperti <a href="https://www.mozilla.org/firefox">Firefox</a> atau <a href="https://www.google.com/intl/en/chrome/browser/">Chrome</a> versi terkini.<br>
+Dan jangan lupa, baca petunjuk pakai di bawah.
+<hr/>
+
+<p>
+<!--
+<span style="display:inline-block; width: 75px"><input type="checkbox" id="cb-da1" onclick="toggle('da1')"/> <label style="cursor:pointer" for="cb-da1">DA1</label> </span>
+<span style="display:inline-block; width: 75px"><input type="checkbox" id="cb-db1" onclick="toggle('db1')"/> <label style="cursor:pointer" for="cb-db1">DB1</label> </span>
+<span style="display:inline-block; width: 75px"><input type="checkbox" id="cb-dc1" onclick="toggle('dc1')" checked/> <label style="cursor:pointer" for="cb-dc1">DC1</label> </span>
+-->
+<span style="display:inline-block; width: 60px"><input type="checkbox" id="cb-c1"  onclick="toggle('c1')" checked disabled/>   <label style="cursor:pointer" for="cb-c1">C1</label> </span>
+<span style="display:inline-block; width: 60px"><input type="checkbox" id="cb-j1"  onclick="toggle('j1')" checked/>   <label style="cursor:pointer" for="cb-j1">J1</label> </span>
+<span style="display:inline-block; width: 60px"><input type="checkbox" id="cb-j2"  onclick="toggle('j2')"/>   <label style="cursor:pointer" for="cb-j2">J2</label> </span>
+<span style="display:inline-block; width: 60px"><input type="checkbox" id="cb-j3"  onclick="toggle('j3')" checked/>   <label style="cursor:pointer" for="cb-j3">J3</label> </span>
+<span style="display:inline-block; width: 60px"><input type="checkbox" id="cb-j4"  onclick="toggle('j4')" checked/>   <label style="cursor:pointer" for="cb-j4">J4</label> </span>
+<span style="display:inline-block; width: 60px"><input type="checkbox" id="cb-j5"  onclick="toggle('j5')" checked/>   <label style="cursor:pointer" for="cb-j5">J5</label> </span>
+<span style="display:inline-block; width: 60px"><input type="checkbox" id="cb-j6"  onclick="toggle('j6')" checked/>   <label style="cursor:pointer" for="cb-j6">J6</label> </span>
+<span style="display:inline-block; width: 60px"><input type="checkbox" id="cb-n1"  onclick="toggle('n1')" checked/>   <label style="cursor:pointer" for="cb-n1">N1</label> </span>
+<span style="display:inline-block; width: 60px"><input type="checkbox" id="cb-n2"  onclick="toggle('n2')" checked/>   <label style="cursor:pointer" for="cb-n2">N2</label> </span>
+<span style="display:inline-block; width: 150px"><input type="checkbox" id="cb-h3"  onclick="toggleTPS('h3')" checked/>   <label style="cursor:pointer" for="cb-h3">Snippet hal. 3</label> </span>
+<span style="display:inline-block; width: 150px"><input type="checkbox" id="cb-h4"  onclick="toggleTPS('h4')" checked/>   <label style="cursor:pointer" for="cb-h4">Snippet hal. 4</label> </span>
+<span style="display:inline-block; width: 200px"><input type="checkbox" id="cb-hex"  onclick="toggleTPS('hex')" />   <label style="cursor:pointer" for="cb-hex">Snippet halaman lain</label> </span>
+</p>
+
+<p>
+<span id="hie" style="display:inline"><a href="javascript:set_hie(0, 0)">Nasional</a></span>
+<span id="msg_status"></span>
+</p>
+
+<div id="tbl"></div>
+
+<p>
+<span id="hie2" style="display:inline"><a href="javascript:set_hie(0, 0)">Nasional</a></span>
+<span id="msg_status2"></span>
+</p>
+<hr/>
+Website ini adalah bukan website resmi KPU dan angka bukan merupakan perhitungan resmi dari KPU.<br>
+Data di situs ini berasal dari scan form <a target="_blank" href="http://pilpres2014.kpu.go.id/c1.php">C1</a> yang dipublish oleh KPU dan didigitisasi dengan bantuan relawan netizen yang independen.
+Data PPLN tidak ditampilkan di sini karena tidak tersedianya scan C1.
+Kolom suara sah dan tidak sah dikalkulasi dari data C1.<br>
+<ul>
+<li>Data di halaman ini belum final dan terus diperbaharui tiap 10 menit.</li>
+<li>Nama yang dihighlight kuning menandakan bahwa ada update entry pada 30 menit terakhir.</li>
+<li>TPS Error: Jumlah TPS yang telah ditandai karena mengalami kesalahan form C1, kesalahan scan, maupun kesalahan input. Bila kesalahan input yang terjadi hanya sekedar isian suara sah tertukar dengan isian suara tidak sah atau total suara sah sudah tergabung dengan suara tidak sah, maka relawan memasukkan nilai yang sebenarnya dimaksud.</li>
+<li>Urutan halaman scan C1 dapat saja muncul dalam urutan yang salah dikarenakan kesalahan pada saat mengunggah scan tersebut. Tampilan yang digunakan oleh situs ini mengikuti urutan pada server KPU.</li>
+<li>Jumlah Suara Sah tidak selalu sama dengan Suara Prabowo-Hatta + Suara Jokowi-JK dikarenakan entri data memungkinkan overwrite angka jumlahnya. Ini bertujuan untuk mengetahui mana saja entri C1 yang bermasalah, baik karena C1 nya sudah salah atau karena human error sewaktu entri data.</li>
+<li>Kita hanya menampilkan daerah yang halaman 3 dari C1 sudah <b><script>if (SHOW_IT == 1) document.write("sepenuhnya"); else document.write(Math.round(SHOW_IT * 100) + "%"); </script></b> selesai dientri.</li>
+</ul>
+
+<p>
+Pada halaman 3, terdapat sejumlah isian yang dapat dimasukkan relawan.
+Sesuai nama tabelnya, isian ini diwakilkan oleh A1, A2, A3, A4, A5, B1, B2, B3, B4, B5, II1, II2, II3, II4.
+A5 dan B5 dihitung secara otomatis masing-masing sebagai A1 + A2 + A3 + A4 dan B1 + B2 + B3 + B4.
+Isian pada halaman 4 yang dipergunakan pada deskripsi di bawah ini diwakilkan oleh IV3 (total suara sah), IV4 (total suara tidak sah).
+</p>
+
+Dari angka-angka pada tabel halaman 3 dan halaman 4, ada lima macam kejanggalan yang dikategorisasi pada tabel di atas.
+<ul>
+<li>Janggal #1: di mana B5 &ne; II4 atau B5 &ne; IV3 + IV4
+<li>Janggal #2: di mana II4 &ne; IV3 + IV4
+<li>Janggal #3: di mana B2 &gt; A2
+<li>Janggal #4: di mana B4 &gt; A4
+<li>Janggal #5: di mana II1 - II2 - II3 &ne; II4
+<li>Janggal #6: di mana II1 - II2 - II3 &ne; IV3 + IV4
+</ul>
+
+<p>
+N1 dan N2 masing-masing mewakili kolom yang menampilkan jumlah TPS ada salah satu pasangan yang tidak mendapatkan suara sama sekali (nol).
+(N2 akan tersedia dalam beberapa saat lagi.)
+</p>
+
+<p>Total gelembung suara bisa diaproksimasi = G1 + G3 + G4 + G5 dimana:
+<ul>
+<li>G1 = max(B5, II4, IV3 + IV4) - min(B5, II4, IV3 + IV4)
+<li>G3 = max(0, B2 - A2)
+<li>G4 = max(0, B4 - A4)
+<li>G5 = abs(II4 - (II1 - II2 - II3))
+</ul>
+G2 yang didefinisikan sebagai max(II4, IV3 + IV4) - min(II4, IV3 + IV4) tidak diperlukan karena nilainya sudah termasuk dalam G1.
+<br>
+G6 = abs(II1 - II2 - II3 - IV3 - IV4) dapat digunakan sebagai indikator lainnya.
+</p>
+
+</body>
+</html>

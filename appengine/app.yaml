@@ -1,0 +1,17 @@
+application: kawal-pemilu
+version: 1
+runtime: python27
+threadsafe: true
+api_version: 1
+
+handlers:
+- url: /
+  static_files: static/index.html
+  upload: static/index.html
+- url: /2
+  static_files: static/index2.html
+  upload: static/index2.html
+- url: /da1x/.*
+  script: dabc1proxy.app
+- url: /.*
+  script: proxy.app
