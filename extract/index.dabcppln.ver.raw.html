@@ -1,0 +1,651 @@
+<html>
+<head>
+<style type="text/css">
+.aggregate tr:nth-child(even) { background: #EEE; }
+.aggregate tr:nth-child(odd) { background: #FFF; }
+.aggregate tbody > tr:hover { background-color: #CCF; }
+#header, #totalRow { background-color: #CCC; }
+.aggregate td { padding: 2px 5px 2px 5px; font-family: verdana; font-size:11px; }
+.aggregate thead > tr > th { padding:0; margin:0; }
+.delta { font-size:9px; }
+.delta.complete {}
+.delta.incomplete { color: #888; }
+</style>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+<script>
+// init
+var hie = [];
+var ids2names = {};
+var raw2 = JSON.parse('RAWC1DATA');
+var data_da1 = JSON.parse('RAWDA1DATA');
+var data_db1 = JSON.parse('RAWDB1DATA');
+var data_dc1 = JSON.parse('RAWDC1DATA');
+var data_ppln = JSON.parse('RAWPPLNDATA');
+var timestamp = new Date(TIMESTAMP);
+var TPSLN_ID = 99999;
+var init = true;
+
+// TPS
+var NO_TPS = 0;
+var PRABOWO_TPS = 1;
+var JOKOWI_TPS = 2;
+var SAH_TPS = 3;
+var TIDAK_SAH_TPS = 4;
+var TERDATA_TPS = 5;
+var ERROR_TPS = 6;
+
+// aggregate
+var TEMPAT_ID = 0;
+var ORTU_ID= 1;
+var NAMA = 2;
+var JUMLAH_TPS = 3;
+var ANAK = 4;
+var PRABOWO = 5;
+var JOKOWI = 6;
+var SAH = 7;
+var TIDAK_SAH = 8;
+var TPS_TERDATA = 9;
+var TPS_ERROR = 10;
+
+// RECAP
+var PRABOWO_D = 0;
+var JOKOWI_D = 1;
+var TOTAL_D = 2;
+var FORM_TERKUMPUL_D = 3;
+var FORM_TOTAL_D = 4;
+var THRESHOLD = 0.005;
+
+// rebuild map
+var data = {};
+var recapc = {};
+for (var i = 0; i < raw2.length; i++) {
+  data[raw2[i][TEMPAT_ID]] = raw2[i];
+  recapc[raw2[i][TEMPAT_ID]] = [raw2[i][PRABOWO], raw2[i][JOKOWI], raw2[i][SAH], raw2[i][TPS_TERDATA], raw2[i][JUMLAH_TPS]];
+}
+var allData = { 'c': recapc, 'da' : data_da1, 'db': data_db1, 'dc' : data_dc1 };
+
+function set_hie(depth, parent, opt_dontpush, opt_next) {
+  hie.length = depth + 1;
+  hie[depth] = parent;
+
+  if (depth == 4) {
+    display_tps(parent);
+  } else {
+    display_aggregate(parent, depth, opt_next);
+  }
+
+  var s = '<a href="javascript:set_hie(0, 0)">Nasional</a>';
+  for (var i = 1; i < hie.length; i++) {
+    s += ' &raquo; <a href="javascript:set_hie(' + i + ', ' + hie[i] + ')">' + ids2names[hie[i]] + '</a>';
+  }
+  $('#hie').html(s);
+  $('#hie2').html(s);
+  var ht = '0';
+  for (var i = 1; i <= depth; i++) {
+    ht = ht+'.'+hie[i];
+  }
+  if (!opt_dontpush) {
+    history.pushState(null, null, '#'+ht);
+  }
+
+  document.getElementById("time").innerHTML = timestamp.toISOString();
+  document.getElementById("time2").innerHTML = timestamp.toISOString();
+}
+
+function prefix_padd(num, cnt) {
+  num = num + '';
+  while (num.length < cnt) num = '0' + num;
+  return num;
+}
+
+function image_filename(p, t, h) {
+  return prefix_padd(p, 7) + prefix_padd(t, 3) + prefix_padd(h, 2);
+}
+
+function gen_values(parent, reported_by, tps_no, prabowo, jokowi, valid, invalid, fbid) {
+  var err = '';
+  if (reported_by) {
+    err += '<br/> <b> Ada kesalahan data <br/> yang telah dilaporkan</b>';
+  }
+  return '<table>' +
+    '<tr><td>Prabowo:<td id="tps_id1_' + tps_no + '">' + prabowo +
+    '<tr><td>Jokowi:<td id="tps_id2_' + tps_no + '">' + jokowi +
+    '<tr><td>Suara sah:<td id="tps_id3_' + tps_no + '">' + valid +
+    '<tr><td>Tidak sah:<td id="tps_id4_' + tps_no + '">' + invalid +
+  '</table>' + err;
+}
+
+function display_tps(parent) {
+    $('#msg_status').html('');
+    $('#msg_status2').html('');
+    var s = '<table border="1"><thead><tr>\
+      <th width="50">TPS\
+      <th width="175">C1 full scan\
+      <th width="225">C1 snippet\
+      <th width="200">Crowd-sourced Values\
+    </thead><tbody>';
+    var tps_pending = 0;
+    var tps = data[parent][ANAK];
+    var URL_SCANC1_PREFIX = "http://scanc1.kpu.go.id/viewp.php?f=";
+    for (var i = 0; i < tps.length; i++) {
+      var r = tps[i];
+      var tps_no = r[0];
+      var is_pending = !r[PRABOWO_TPS] && !r[JOKOWI_TPS] && !r[SAH_TPS] && !r[TIDAK_SAH_TPS];
+      var has_scan = true; // FIXME
+      var has_error = (r[ERROR_TPS] != '0');
+      var entered_by = r[TERDATA_TPS];
+      var num = image_filename(parent, tps_no, 4);
+      if (is_pending && !tps_pending) tps_pending = tps_no;
+      s += '<tr bgcolor=' + (has_error ? '#ffaaaa' : '') + '><th>#' + tps_no +
+        '<td align=center>' +
+        'Jika snippet di sebelah<br>kanan salah, anda bisa<br>melihat halaman lainnya<br>dari website KPU:<br><br>' +
+          '<a href="' + URL_SCANC1_PREFIX + image_filename(parent, tps_no, 1) + '.jpg" target="_blank">Halaman 1</a><br/>' +
+          '<a href="' + URL_SCANC1_PREFIX + image_filename(parent, tps_no, 2) + '.jpg" target="_blank">Halaman 2</a><br/>' +
+          '<a href="' + URL_SCANC1_PREFIX + image_filename(parent, tps_no, 3) + '.jpg" target="_blank">Halaman 3</a><br/>' +
+          '<a href="' + URL_SCANC1_PREFIX + image_filename(parent, tps_no, 4) + '.jpg" target="_blank">Halaman 4</a><br/>' +
+          '<a href="' + URL_SCANC1_PREFIX + image_filename(parent, tps_no, 5) + '.jpg" target="_blank">Halaman 5</a><br/>' +
+        '<td><a href="' + URL_SCANC1_PREFIX + num +
+          '.jpg" target="_blank"><div style="width: 200px; height: 300px; overflow: hidden;">' +
+        '<img style="position: relative; left: -400px; top: -120px;" width="600" src="' + URL_SCANC1_PREFIX + num + '.jpg"></div></a>' +
+        '<td align=center id="csval_'+ tps_no +'">' + (has_scan ? (is_pending ? input_box(parent, tps_no) :
+          gen_values(parent, has_error, tps_no, r[PRABOWO_TPS], r[JOKOWI_TPS], r[SAH_TPS], r[TIDAK_SAH_TPS], entered_by)) : ' N / A ');
+    }
+    s += '</tbody></table>';
+    $('#tbl').html(s);
+}
+
+function disp_percent(rat) {
+  return percent(rat).replace(/\./, ',') + "%";
+}
+
+function disp_delta(i) {
+  if (i < 0) return "-" + format(Math.abs(i));
+  else if (i > 0) return "+" + format(Math.abs(i));
+  return i;
+}
+
+function disp_delta_percent(rat) {
+  if (isNaN(rat)) return '0,00';
+  var p = percent(Math.abs(rat)).replace(/\./, ',');
+  if (rat < -1e-4) return "-" + p + "%";
+  else if (rat > 1e-4) return "+" + p + "%";
+  return p + "%";
+}
+
+function percent(rat) {
+  if (isNaN(rat)) return '0.00';
+  var p = Math.round(rat * 10000);
+  return Math.floor(p / 100) + '.' + prefix_padd(p % 100, 2);
+}
+
+function replace_char(s, index, ch) {
+  return s.substr(0, index) + ch + s.substr(index + 1);
+}
+
+function format(number) {
+  if (number == 0) return '0';
+  var nres = '' + number;
+  var res = '';
+  for (var i =0; i< nres.length;i++) {
+    if (i > 0 && i%3 == 0) {
+      res = '.' + res;
+    }
+    res = nres[nres.length-i-1] + res;
+  }
+  return res;
+}
+
+function display_recap(parent, level, prevLevel, highlight, regionName) {
+  // construct children
+  if (parent in allData[level]) {
+    var child = {};
+    for (var i = 0; i < data[parent][ANAK].length; i++) {
+      child[i] = data[parent][ANAK][i];
+    }
+
+    for (var i = 0; i < data[parent][ANAK].length; i++) {
+      row = allData[level][child[i]];
+      var complete = level == 'dc'  || row[FORM_TERKUMPUL_D] == row[FORM_TOTAL_D];
+      if (row[FORM_TOTAL_D] > 0 && row[TOTAL_D] > 0) { // sanity check
+        var perc = row[FORM_TERKUMPUL_D] / row[FORM_TOTAL_D];
+        var percentCur = [row[PRABOWO_D] / row[TOTAL_D], row[JOKOWI_D] / row[TOTAL_D]];
+        var diff;
+        var absDiff;
+        var rowPrev = allData[prevLevel][child[i]];
+        var percentPrev = [rowPrev[PRABOWO_D] / rowPrev[TOTAL_D], rowPrev[JOKOWI_D] / rowPrev[TOTAL_D]];
+        if (rowPrev[TOTAL_D] == 0) { // WHAT!!
+          diff = [percentCur[0], percentCur[1]];
+          absDiff = [row[PRABOWO_D], row[JOKOWI_D]];
+        }
+        else {
+          diff = [percentCur[0] - percentPrev[0], percentCur[1] - percentPrev[1]];
+          absDiff = [row[PRABOWO_D] - rowPrev[PRABOWO_D], row[JOKOWI_D] - rowPrev[JOKOWI_D]];
+        }
+
+        $('#' + level + '_pb_c_'+child[i]).html(format(row[PRABOWO_D]) +
+          '<br> <div class="delta '+(complete?'complete':'incomplete')+'">(' + disp_delta(absDiff[0]) + ')</div>');
+        $('#' + level + '_pb_p_'+child[i]).html(disp_percent(percentCur[0]) +
+          '<br> <div class="delta">(' + disp_delta_percent(diff[0]) + ')</div>');
+        $('#' + level + '_jk_c_'+child[i]).html(format(row[JOKOWI_D]) +
+          '<br> <div class="delta '+(complete?'complete':'incomplete')+'">(' + disp_delta(absDiff[1]) + ')</div>');
+        $('#' + level + '_jk_p_'+child[i]).html(disp_percent(percentCur[1]) +
+          '<br> <div class="delta">(' + disp_delta_percent(diff[1]) + ')</div>');
+        if (highlight && (rowPrev[TOTAL_D] == 0 || Math.abs(diff[0]) >= THRESHOLD)) {
+          $('#' + level + '_pb_p_'+child[i]).css('background-color', "lightpink");
+        }
+        if (highlight && (rowPrev[TOTAL_D] == 0 || Math.abs(diff[1]) >= THRESHOLD)) {
+          $('#' + level + '_jk_p_'+child[i]).css('background-color', "lightpink");
+        }
+        if (document.getElementById(level + '_p_' + child[i])) {
+          $('#' + level + '_p_' + child[i]).text(disp_percent(perc));
+          $('#' + level + '_p_' + child[i]).attr('title', row[FORM_TERKUMPUL_D] + ' ' + regionName +' dari ' + row[FORM_TOTAL_D]);
+          if (complete) {
+            $('#' + level + '_p_' + child[i]).css('background', "lightgreen");
+          }
+        }
+
+      }
+    }
+
+    // aggregate
+    var row = allData[level][parent];
+    var complete = (row[FORM_TERKUMPUL_D] == row[FORM_TOTAL_D]);
+    if (row[TOTAL_D] > 0) {
+      $('#' + level + '_pb_ct').text(format(row[PRABOWO_D]));
+      $('#' + level + '_pb_pt').text(disp_percent(row[PRABOWO_D]/row[TOTAL_D]));
+      $('#' + level + '_jk_ct').text(format(row[JOKOWI_D]));
+      $('#' + level + '_jk_pt').text(disp_percent(row[JOKOWI_D]/row[TOTAL_D]));
+      if ($('#' + level + '_pt').length) {
+        $('#' + level + '_pt').text(disp_percent(row[FORM_TERKUMPUL_D] / row[FORM_TOTAL_D]));
+        $('#' + level + '_pt').attr('title', format(row[FORM_TERKUMPUL_D]) + ' ' + regionName +' dari ' + format(row[FORM_TOTAL_D]));
+        if (complete) {
+          $('#' + level + '_pt').css('background', "lightgreen");
+        }
+      }
+    }
+  }
+}
+
+// Sori yah, udah agak capek, jadi hajar bleh. Moga-moga masih bisa diikuti model datanya.
+function display_ppln() {
+  ids2names[TPSLN_ID] = "Luar Negeri";
+  var total = data_ppln["total"];
+  var detail = data_ppln["detail"];
+  var dc1 = data_ppln["dc1"];
+  var s = '<table class="aggregate"><thead><tr id="header" bgcolor="#DDDDDD">\
+    <th width="40">No\
+    <th width="170">Negara\
+    <th width="110">Kota\
+    <th width="140" class="c1" colspan="2">Prabowo-Hatta<br><span style="font-size: 9pt">(Pengumuman PPLN)\
+    <th width="120" class="dc1" colspan="2">Prabowo-Hatta<br>(DC1)\
+    <th width="140" class="c1" colspan="2">Jokowi-JK<br><span style="font-size: 9pt">(Pengumuman PPLN)\
+    <th width="120" class="dc1" colspan="2">Jokowi-JK<br>(DC1)\
+    <th width="70">Suara sah\
+    <th width="70">Tidak sah\
+      <th width="70">Sumber\
+  </thead><tfoot>' +
+  '<tr id="totalRow" bgcolor="#DDDDDD">\
+    <td>&nbsp;<td>\
+    <td align="right"><span style="font-weight:bold; font-family: Times, serif; font-size: 12pt">TOTAL: &nbsp;</span> ' +
+    '<td align=right class="c1" width=60 id="c_pb_ct">' +
+    '<td align=right class="c1" id="c_pb_pt">' +
+    '<td align=right class="dc1" id="dc_pb_ct"><td align=right class="dc1" id="dc_pb_pt">' +
+    '<td align=right class="c1" width=60 id="c_jk_ct">' +
+    '<td align=right class="c1" id="c_jk_pt">' +
+    '<td align=right class="dc1" id="dc_jk_ct"><td align=right class="dc1" id="dc_jk_pt">' +
+    '<td align=right id="valid">' +
+    '<td align=right id="invalid"><td>' +
+  '</tfoot><tbody>';
+
+  tot = [0, 0, 0, 0, 0, 0, 0, 0];
+  for (var i = 0; i < detail.length; i++) {
+    var negara = detail[i][0];
+    var kota = detail[i][1];
+    var c11 = detail[i][2];
+    var c12 = detail[i][3];
+    var c11p = c11 / (c11 + c12);
+    var c12p = c12 / (c11 + c12);
+    var dc11 = dc1[i][2];
+    var dc12 = dc1[i][3];
+    var dc11p = dc11 / (dc11 + dc12);
+    var dc12p = dc12 / (dc11 + dc12);
+    var sah = detail[i][4];
+    var tidaksah = detail[i][5];
+    var diff1 = c11 != 0 && c11 != dc11;
+    var diff2 = c12 != 0 && c12 != dc12;
+    tot[0] += c11 ? parseInt(c11) : 0;
+    tot[1] += c12 ? parseInt(c12) : 0;
+    tot[2] += dc11 ? parseInt(dc11) : 0;
+    tot[3] += dc12 ? parseInt(dc12) : 0;
+    tot[4] += sah ? parseInt(sah) : 0;
+    tot[5] += tidaksah ? parseInt(tidaksah) : 0;
+
+    s += '<tr id="row' + i + '"><td align=center>' + (i + 1) + '</td>' +
+      '<td data-sort-index="1" data-sort="'+negara+'">' + negara + '</td>' +
+      '<td data-sort-index="2" data-sort="'+kota+'">' + kota + '</td>' +
+      '<td data-sort-index="3" class="c1" align="right" data-sort="'+c11+'">' + (c11 != 0 ? format(c11) : '') + '</td><td align="right" class="c1"'+ (c11 > c12 ? ' bgcolor="lightgreen"' : '') + '>' + (c11 != 0 ? disp_percent(c11p) : '') + '</td>' +
+      '<td data-sort-index="4" class="dc1" align="right" data-sort="'+dc11+'">' + (dc11 != 0 ? format(dc11) : '') + (c11 != 0 ? '<br><span class="delta' + (diff1 ? ' red' : '') +'">(' + disp_delta(dc11 - c11) + ')</span> ' : '') +
+        '</td><td align="right" ' + (dc11 > dc12 ? 'bgcolor="lightgreen" ' : '') + 'class="dc1">' + (dc11 != 0 ? disp_percent(dc11p) : '') + '</td>' +
+      '<td data-sort-index="5" class="c1" align="right" data-sort="'+c12+'">' + (c12 != 0 ? format(c12) : '') + '</td><td align="right" class="c1"' + (c12 > c11 ? ' bgcolor="lightgreen"' : '') + '>' + (c12 != 0 ? disp_percent(c12p) : '') + '</td>' +
+      '<td data-sort-index="6" class="dc1" align="right" data-sort="'+dc12+'">' + (dc12 != 0 ? format(dc12) : '') + (c12 != 0 ? '<br><span class="delta' + (diff2 ? ' red' : '') + '">(' + disp_delta(dc12 - c12) + ')</span> ' : '') +
+        '</td><td align="right" ' + (dc12 > dc11 ? 'bgcolor="lightgreen" ' : '') + 'class="dc1">' + (dc12 != 0 ? disp_percent(dc12p) : '') + '</td>' +
+      '<td data-sort-index="7" align="right" data-sort="' + sah + '">' + (sah != 0 ? format(sah) : '') + '</td>' +
+      '<td data-sort-index="8" align="right" data-sort="' + tidaksah + '">' + (tidaksah != 0 ? format(tidaksah) : '') + '</td>' +
+      '<td>' +
+        (detail[i][7] != "" ? '<a target="_blank" href="' + detail[i][7] + '">[1]</a> ' : '') +
+        (detail[i][8] != "" ? '<a target="_blank" href="' + detail[i][8] + '">[2]</a> ' : '') +
+        (detail[i][9] != "" ? '<a target="_blank" href="' + detail[i][9] + '">[3]</a>' : '') +
+        '</td></tr>';
+  }
+
+  $('#tbl').html(s);
+  updateColumns();
+  toggleTotal();
+  $("#c_pb_ct").text(format(tot[0]));
+  $("#c_pb_pt").text(disp_percent(tot[0] / (tot[0] + tot[1])));
+  if (tot[0] > tot[1])
+    $("#c_pb_pt").css("background-color", "lightgreen");
+  $("#c_jk_ct").text(format(tot[1]));
+  $("#c_jk_pt").text(disp_percent(tot[1] / (tot[0] + tot[1])));
+  if (tot[1] > tot[0])
+    $("#c_jk_pt").css("background-color", "lightgreen");
+  $("#dc_pb_ct").text(format(tot[2]));
+  $("#dc_pb_pt").text(disp_percent(tot[2] / (tot[2] + tot[3])));
+  if (tot[2] > tot[3])
+    $("#dc_pb_pt").css("background-color", "lightgreen");
+  $("#dc_jk_ct").text(format(tot[3]));
+  $("#dc_jk_pt").text(disp_percent(tot[3] / (tot[2] + tot[3])));
+  if (tot[3] > tot[2])
+    $("#dc_jk_pt").css("background-color", "lightgreen");
+  $("#valid").text(format(tot[4]));
+  $("#invalid").text(format(tot[5]));
+}
+
+function display_aggregate(parent, depth, opt_next) {
+    // Bugs:
+//    var x = data_txt.indexOf("PALENGA'\"AN");
+//    if (x != -1) data_txt = replace_char(data_txt, x + 8, '\'');
+//    x = data_txt.indexOf("RA'\"AS");
+//    if (x != -1) data_txt = replace_char(data_txt, x + 3, '\'');
+    var wda1 = depth < 4;
+    var wdb1 = depth < 3;
+    var wdc1 = depth < 2;
+    var wdd1 = depth < 1;
+
+    $('#msg_status').html('');
+    $('#msg_status2').html('');
+    if (parent == TPSLN_ID) {
+      display_ppln();
+      return 0;
+    }
+    var s = '<table class="aggregate"><thead><tr id="header" bgcolor="#DDDDDD">\
+      <th width="40">No\
+      <th width="225">Tempat\
+      <th width="120" class="c1" colspan="2">Prabowo-Hatta<br>(C1)' +
+      (wda1 ? '<th width="120" class="da1" colspan="2">Prabowo-Hatta<br>(DA1)' : '')      +
+      (wdb1 ? '<th width="120" class="db1" colspan="2">Prabowo-Hatta<br>(DB1)' : '')      +
+      (wdc1 ? '<th width="120" class="dc1" colspan="2">Prabowo-Hatta<br>(DC1)' : '')      +
+      '<th width="120" class="c1" colspan="2">Jokowi-JK<br>(C1)' +
+      (wda1 ? '<th width="120" class="da1" colspan="2">Jokowi-JK<br>(DA1)' : '') +
+      (wdb1 ? '<th width="120" class="db1" colspan="2">Jokowi-JK<br>(DB1)' : '') +
+      (wdc1 ? '<th width="120" class="dc1" colspan="2">Jokowi-JK<br>(DC1)' : '') +
+      '<th width="70">Suara sah\
+      <th width="70">Tidak sah\
+      <th class="c1" width="60">TPS Error\
+      <th class="c1" width="60">TPS'+
+      (wdc1 ? '<th class="da1" width="60">DA1%' : '') +
+      (wdd1 ? '<th class="db1" width="60">DB1%' : '') +
+    '</thead><tfoot>' +
+    '<tr id="totalRow" bgcolor="#DDDDDD">\
+      <td>&nbsp;\
+      <td align="right"><span style="font-weight:bold; font-family: Times, serif; font-size: 12pt">TOTAL: &nbsp;</span> ' +
+      '<td align=right class="c1" width=60 id="c_pb_ct"> <td align=right class="c1" id="c_pb_pt">' +
+      (wda1 ? '<td align=right class="da1" id="da_pb_ct"><td align=right class="da1" id="da_pb_pt">' : '') +
+      (wdb1 ? '<td align=right class="db1" id="db_pb_ct"><td align=right class="db1" id="db_pb_pt">' : '') +
+      (wdc1 ? '<td align=right class="dc1" id="dc_pb_ct"><td align=right class="dc1" id="dc_pb_pt">' : '') +
+      '<td align=right class="c1" width=60 id="c_jk_ct"> <td align=right class="c1" id="c_jk_pt">' +
+      (wda1 ? '<td align=right class="da1" id="da_jk_ct"><td align=right class="da1" id="da_jk_pt">' : '') +
+      (wdb1 ? '<td align=right class="db1" id="db_jk_ct"><td align=right class="db1" id="db_jk_pt">' : '') +
+      (wdc1 ? '<td align=right class="dc1" id="dc_jk_ct"><td align=right class="dc1" id="dc_jk_pt">' : '') +
+      '<td align=right id="valid">' +
+      '<td align=right id="invalid">' +
+      '<td class="c1" align=right id="tpserror">' +
+      '<td class="c1" align=right id="tps">' +
+      (wdc1 ? '<td align=right class="da1" id="da_pt"></td>' : '') +
+      (wdd1 ? '<td align=right class="db1" id="db_pt"></td>' : '') +
+    '</tfoot><tbody>';
+
+    var total = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    var ditotal = [PRABOWO, JOKOWI, SAH, TIDAK_SAH, TPS_ERROR, TPS_TERDATA, JUMLAH_TPS];
+    var lokasi = data[parent];
+    for (var i = 0; i < lokasi[ANAK].length; i++) {
+      var r = data[lokasi[ANAK][i]];
+      var prabowo_count = r[PRABOWO];
+      var jokowi_count = r[JOKOWI];
+      var valid_count = r[SAH];
+      var invalid_count = r[TIDAK_SAH];
+      var errors_count = r[TPS_ERROR];
+      var entered_count = r[TPS_TERDATA];
+      var tps_count = r[JUMLAH_TPS];
+      var prabowo_percent = percent(prabowo_count / (prabowo_count + jokowi_count)) + '%';
+      var jokowi_percent = percent(jokowi_count / (prabowo_count + jokowi_count)) + '%';
+      for (var j = 0; j <= ditotal.length; j++) total[ditotal[j]] += r[ditotal[j]];
+      var dsah = valid_count - (prabowo_count + jokowi_count);
+
+      var pid = r[TEMPAT_ID];
+      ids2names[pid] = r[NAMA];
+      var sort_of_done_entered = (percent(entered_count / tps_count) >= 99) ? 'bgcolor=lightgreen' : '';
+      s += '<tr id="row' + i + '"><td align=center>' + (i + 1) +
+        '<td><a href="javascript:set_hie(' + (depth + 1) + ',' + r[TEMPAT_ID] +')">' + r[NAMA] + '</a>' +
+        '<td align=right class="c1" width=60>' + format(prabowo_count) +
+        '<td align=right class="c1" ' + (prabowo_count > jokowi_count ? "bgcolor=lightgreen" : "") + '>' + prabowo_percent +
+        (wda1 ? '<td align=right class="da1" id="da_pb_c_' + pid + '"></td><td align=right class="da1" id="da_pb_p_' + pid + '"></td>' : '') +
+        (wdb1 ? '<td align=right class="db1" id="db_pb_c_' + pid + '"></td><td align=right class="db1" id="db_pb_p_' + pid + '"></td>' : '') +
+        (wdc1 ? '<td align=right class="dc1" id="dc_pb_c_' + pid + '"></td><td align=right class="dc1" id="dc_pb_p_' + pid + '"></td>' : '') +
+        '<td align=right class="c1" width=60>' + format(jokowi_count) +
+        '<td align=right class="c1" ' + (prabowo_count < jokowi_count ? "bgcolor=lightgreen" : "") + '>' + jokowi_percent +
+        (wda1 ? '<td align=right class="da1" id="da_jk_c_' + pid + '"></td><td align=right class="da1" id="da_jk_p_' + pid + '"></td>' : '') +
+        (wdb1 ? '<td align=right class="db1" id="db_jk_c_' + pid + '"></td><td align=right class="db1" id="db_jk_p_' + pid + '"></td>' : '') +
+        (wdc1 ? '<td align=right class="dc1" id="dc_jk_c_' + pid + '"></td><td align=right class="dc1" id="dc_jk_p_' + pid + '"></td>' : '') +
+        '<td align=right ' + (dsah != 0 ? "bgcolor=lightpink" : "") + '>' + format(valid_count) +
+           (dsah != 0 ? (' <br> <span class="delta">(' + disp_delta(dsah) + ') </span>') : "") +
+        '<td align=right>' + format(invalid_count) +
+        '<td class="c1" align=right ' + (errors_count != 0 ? "bgcolor=lightpink" : "") + ' title="' + format(errors_count) + " TPS dari " + format(tps_count) + '">' + disp_percent(errors_count / tps_count) +
+        '<td align=right ' + sort_of_done_entered +' title="' + format(entered_count) + ' TPS dari ' + format(tps_count) + '">' +
+           disp_percent(entered_count / tps_count) +
+        (wdc1 ? '<td align=right class="da1" id="da_p_' + pid + '"></td>' : '') +
+        (wdd1 ? '<td align=right class="db1" id="db_p_' + pid + '"></td>' : '');
+    }
+
+    if (parent == 0) {
+      ids2names[TPSLN_ID] = "Luar Negeri";
+      var tppln = data_ppln["total"];
+      var n = lokasi[ANAK].length;
+      s += '<tr id="row' + n + '"><td align=center>' + (n + 1) +
+        '<td><a href="javascript:set_hie(' + (depth + 1) + ',99999)">LUAR NEGERI</td>' +
+        '<td align=right class="c1" width=60>' + format(tppln[1]) +
+          '</td><td class="c1"' + (tppln[1] > tppln[2] ? 'bgcolor="lightgreen" ' : '') + ' align=right>' + disp_percent(tppln[1] / (tppln[1] + tppln[2])) +
+        '<td class="da1" align=right>-----</td><td class="da1" align=right>-----</td>' +
+        '<td class="db1" align=right>-----</td><td class="db1" align=right>-----</td>' +
+        '<td align=right class="dc1" width=60>' + format(tppln[6]) + '</td><td class="dc1" align=right>' + disp_percent(tppln[6] / (tppln[6] + tppln[7])) +
+        '<td align=right class="c1" width=60>' + format(tppln[2]) + '</td><td class="c1"' + (tppln[1] < tppln[2] ? 'bgcolor="lightgreen" ' : '') + ' align=right>' + disp_percent(tppln[2] / (tppln[1] + tppln[2])) +
+        '<td class="da1" align=right>-----</td><td class="da1" align=right>-----</td>' +
+        '<td class="db1" align=right>-----</td><td class="db1" align=right>-----</td>' +
+        '<td align=right class="dc1" width=60>' + format(tppln[7]) + '</td><td class="dc1" align=right>' + disp_percent(tppln[7] / (tppln[6] + tppln[7])) +
+        '<td align=right>' + format(tppln[3]) + '</td><td align=right>' + format(tppln[4]) + '</td>' +
+        '<td class="c1" align=right>-----</td>' +
+        '<td class="c1" align=right title="' + format(tppln[8]) + ' PPLN dari ' + format(tppln[9]) +'">' + disp_percent(tppln[8] / tppln[9]) + '<br>PPLN</td>' +
+        '<td class="da1" align=right>-----</td><td class="db1" align=right>-----</td>';
+      total[PRABOWO] += tppln[1];
+      total[JOKOWI] += tppln[2];
+      total[SAH] += tppln[3];
+      total[TIDAK_SAH] += tppln[4];
+      if (init) {
+        allData['dc'][0][TOTAL_D] += tppln[6] + tppln[7];
+        allData['dc'][0][PRABOWO_D] += tppln[6];
+        allData['dc'][0][JOKOWI_D] += tppln[7];
+        init = false;
+      }
+    }
+
+    var prabowo_count = total[PRABOWO];
+    var jokowi_count = total[JOKOWI];
+    var valid_count = total[SAH];
+    var invalid_count = total[TIDAK_SAH];
+    var errors_count = total[TPS_ERROR];
+    var entered_count = total[TPS_TERDATA];
+    var tps_count = total[JUMLAH_TPS];
+    var prabowo_percent = percent(prabowo_count / (prabowo_count + jokowi_count)) + '%';
+    var jokowi_percent = percent(jokowi_count / (prabowo_count + jokowi_count)) + '%';
+    var dsah = valid_count - (prabowo_count + jokowi_count);
+    s += '</tbody></table>';
+
+  if (opt_next && opt_next()) {
+  } else {
+    $('#tbl').html(s);
+    updateColumns();
+    toggleTotal();
+
+    $("#c_pb_ct").text(format(prabowo_count));
+    $("#c_pb_pt").text(prabowo_percent);
+    if (prabowo_count > jokowi_count)
+      $("#c_pb_pt").css("background-color", "lightgreen");
+    $("#c_jk_ct").text(format(jokowi_count));
+    $("#c_jk_pt").text(jokowi_percent);
+    if (jokowi_count > prabowo_count)
+      $("#c_jk_pt").css("background-color", "lightgreen");
+    $("#valid").html((dsah != 0 ? '<span class="delta">(' + disp_delta(dsah) + ')</span> ': '') + format(valid_count));
+    $("#invalid").html(format(invalid_count));
+    $("#tpserror").text(disp_percent(errors_count / tps_count));
+    $("#tpserror").attr("title", format(errors_count) + " TPS dari " + format(tps_count));
+    if (errors_count != 0)
+      $("#tpserror").css("background-color", "lightpink");
+    $("#tps").text(disp_percent(entered_count / tps_count));
+    $("#tps").attr("title", format(entered_count) + ' TPS dari ' + format(tps_count));
+    if (percent(entered_count / tps_count) >= 99)
+      $("#tps").css("background-color", "lightgreen");
+
+    var regionName = ['propinsi', 'kabupaten/kota', 'kecamatan', 'kelurahan', 'tps'];
+    if (wda1) display_recap(parent, 'da', 'c', depth >= 2, regionName[2]);
+    if (wdb1) display_recap(parent, 'db', 'da', depth >= 1, regionName[1]);
+    if (wdc1) display_recap(parent, 'dc', 'db', depth >= 0, regionName[0]);
+  }
+}
+
+function updatePos(opt_pos) {
+  if (location.hash == "") {
+    set_hie(0, 0);
+    return false;
+  }
+  var hies = location.hash.substr(1).split('.');
+  if (opt_pos >= hies.length) {
+    return false;
+  }
+  for (var i = opt_pos; i+1 < hies.length; i++) {
+    if (hie.length <= i || hie[i] != hies[i-0]) {
+      set_hie(i, hies[opt_pos], true, function() { return updatePos(i+1);});
+      return true;
+    }
+  }
+  set_hie(hies.length-1, hies[hies.length-1], true, function() { return false;});
+  return true;
+}
+
+function reload() {
+ nest = location.hash != "";
+  if (nest) {
+   updatePos(0);
+  } else
+    set_hie(0, 0);
+}
+
+function updateColumns() {
+  var dd = ['c1', 'da1', 'db1', 'dc1'];
+  for (var i=0; i<4; i++) toggle(dd[i]);
+}
+
+function toggle(d) {
+  var cb = $('#cb-' + d);
+  var el = $('.' + d);
+  if (cb.is(':checked')) el.show();
+  else el.hide();
+//  console.log('toggle', d, cb.is(':checked'));
+}
+
+function toggleTotal() {
+  var total = $('#total');
+  if (!total.is(':checked')) {
+    var lastRow = 0;
+    for (var i = 1; i < 100; i++)
+      if ($('#row' + i).length <= 0) {
+        lastRow = i - 1;
+        break;
+      }
+    $("#row" + lastRow).after($("#totalRow"));;
+  }
+  else {
+    $("#header").after($("#totalRow"));
+  }
+}
+
+$(function () {
+  reload();
+})
+
+window.onhashchange = reload;
+</script>
+<title>Kawal Pemilu 2014</title>
+
+</head>
+
+<body>
+Bergabung bersama kami bersama-sama kita Kawal Pemilu 2014!
+<br/>
+Kunjungi <a target="_blank" href="https://www.facebook.com/pages/Kawal-Pemilu-2014/1452601258341836">Facebook Page Kawal Pemilu 2014</a> dan bantu kami melaporkan problem data!
+<a href="https://twitter.com/share" class="twitter-share-button" data-url="http://www.kawalpemilu.org" data-text="Mari berpartisipasi mengawal pemilu bersama" data-hashtags="kawalpemilu">Tweet</a>
+<script>!function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');</script>
+<br/><br/>
+Halaman ini adalah rekaman dari <a href="http://www.kawalpemilu.org/">Kawal Pemilu 2014</a> yang diambil pada <span id="time"></span> (<a href="http://id.wikipedia.org/wiki/Waktu_Universal_Terkoordinasi">UTC</a> +0).<br>
+Untuk melihat halaman ini secara utuh, akses internet tetap dibutuhkan, antara lain karena hasil pindai C1 tetap diambil dari server KPU.<br>
+Bukalah halaman ini menggunakan peramban (browser) modern seperti <a href="https://www.mozilla.org/firefox">Firefox</a> atau <a href="https://www.google.com/intl/en/chrome/browser/">Chrome</a> versi terkini.<br>
+Dan jangan lupa, baca petunjuk pakai di bawah.
+<hr/>
+
+<p>
+<span style="display:inline-block; width: 75px"><input type="checkbox" id="cb-c1"  onclick="toggle('c1')" checked/>   <label style="cursor:pointer" for="cb-c1">C1</label> </span>
+<span style="display:inline-block; width: 75px"><input type="checkbox" id="cb-da1" onclick="toggle('da1')" checked/> <label style="cursor:pointer" for="cb-da1">DA1</label> </span>
+<span style="display:inline-block; width: 75px"><input type="checkbox" id="cb-db1" onclick="toggle('db1')" checked/> <label style="cursor:pointer" for="cb-db1">DB1</label> </span>
+<span style="display:inline-block; width: 75px"><input type="checkbox" id="cb-dc1" onclick="toggle('dc1')" checked/> <label style="cursor:pointer" for="cb-dc1">DC1</label> </span>
+<span style="display:inline-block; width: 125px"><input type="checkbox" id="total" onclick="toggleTotal()" checked/> <label style="cursor:pointer" for="total">Total di atas</label> </span>
+</p>
+
+<p>
+<span id="hie" style="display:inline"><a href="javascript:set_hie(0, 0)">Nasional</a></span>
+<span id="msg_status"></span>
+</p>
+
+<div id="tbl"></div>
+
+<p>
+<span id="hie2" style="display:inline"><a href="javascript:set_hie(0, 0)">Nasional</a></span>
+<span id="msg_status2"></span>
+</p>
+<hr/>
+Website ini adalah bukan website resmi KPU dan angka bukan merupakan perhitungan resmi dari KPU.<br/>
+Data di situs ini berasal dari scan form C1 dan data rekapitulasi DA1 yang dipublish oleh KPU dan didigitisasi dengan bantuan relawan netizen yang independen.<br/>
+Kolom suara sah dan tidak sah dikalkulasi dari data C1.<br>
+Data DA1 adalah hasil pleno tingkat kecamatan dengan menyediakan data sampai kelurahan. <br>
+Data DB1 adalah hasil pleno tingkat kabupaten/kota dengan menyediakan data sampai kecamatan.<br>
+Data DC1 adalah hasil pleno tingkat provinsi dengan menyediakan data sampai kabupaten/kota. <br>
+Data DA1, DB1 dan DC1 tersebut diambil dari website KPU.<br>
+<ul>
+<li>Data di halaman ini merupakan snapshot <a href="http://www.kawalpemilu.org/">Kawal Pemilu 2014</a> pada <span id="time2"></span> (<a href="http://id.wikipedia.org/wiki/Waktu_Universal_Terkoordinasi">UTC</a> +0).</li>
+<li>Informasi tentang perbedaan hasil total dilakukan antara satu level dengan level di bawahnya. Misalnya, rekapitulasi di DB1 dengan rekapitulasi di DA1.</li>
+<li>Perbedaan rekapitulasi antara satu level dengan level di bawahnya (misal antara DB1 dan DA1) akan dihighlight, bila prosentase perbedaannya melebihi 0,5%. Highlight dilakukan pada DC1, DB1, DA1 dilakukan masing-masing untuk tingkat nasional dan tingkat kabupaten, tingkat kabupaten dan tingkat kecamatan, dan tingkat kecamatan dan tingkat kelurahan. </li>
+<li>TPS Error: Jumlah TPS yang telah ditandai karena mengalami kesalahan form C1, kesalahan scan, maupun kesalahan input.</li>
+<li>Jumlah Suara Sah tidak selalu sama dengan Suara Prabowo-Hatta + Suara Jokowi-JK dikarenakan entri data memungkinkan overwrite angka jumlahnya. Ini bertujuan untuk mengetahui mana saja entri C1 yang bermasalah, baik karena C1 nya sudah salah atau karena human error sewaktu entri data.</li>
+</ul>
+<br><br>
+
+ </body>
+</html>
