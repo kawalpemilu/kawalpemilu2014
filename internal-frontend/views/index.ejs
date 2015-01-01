@@ -1,0 +1,942 @@
+<html>
+<head>
+<style type="text/css">
+.aggregate tr:nth-child(even) { background: #EEE; }
+.aggregate tr:nth-child(odd) { background: #FFF; }
+.aggregate tbody > tr:hover { background-color: #CCF; }
+.aggregate thead > tr:first-child,
+.aggregate tbody > tr:last-child { background-color: #CCC; }
+.aggregate td { padding: 2px 5px 2px 5px; font-family: verdana; font-size:10px; }
+.aggregate thead > tr > th { padding:0; margin:0; }
+</style>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-296967-1', 'auto');
+  ga('require', 'displayfeatures');
+  ga('send', 'pageview');
+</script>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+<!-- <script src="jquery.min.js"></script> -->
+<script>
+window.fbAsyncInit = function() {
+  FB.init({
+    appId      : '118',
+    xfbml      : true,
+    cookie     : true,
+    version    : 'v2.0',
+    status     : true,
+  });
+
+  FB.getLoginStatus(function(response) {
+    if (response.status === 'connected') {
+      console.log('Connected to Facebook');
+      get_fb('me', function (res) {
+        $.ajax(host + '/api/in_whitelist/' + res.id, { cache: false }).done(function(data) {
+          whitelisted = data.received;
+          console.log('in_whitelist = ' + whitelisted);
+          reload();
+        });
+      });
+    } else if (response.status === 'not_authorized') {
+      alert('Please log into this app.');
+    } else {
+      alert('Please log into Facebook.');
+    }
+  });
+};
+
+
+$(reload);
+
+(function(d, s, id){
+   var js, fjs = d.getElementsByTagName(s)[0];
+   if (d.getElementById(id)) {return;}
+   js = d.createElement(s); js.id = id;
+   js.src = "http://connect.facebook.net/en_US/sdk.js";
+   fjs.parentNode.insertBefore(js, fjs);
+ }(document, 'script', 'facebook-jssdk'));
+
+
+var hie = [0,1,2,3,4];
+var ids2names = { '0': 'Nasional' };
+var host = 'http://the-host';
+var whitelisted = false;
+// var host = '';
+
+var fb_cache = {};
+function get_fb(id, cb) {
+  if (fb_cache[id]) return cb(fb_cache[id]);
+  FB.api('/' + id, function (res) {
+    // if (res.link && res.name) {
+    //   fb_cache[id] = res;
+    // }
+    fb_cache[id] = res;
+    cb(res);
+  });
+}
+
+var isPapua = false;
+
+function set_hie(depth, parent, dont_push_state, next_hie) {
+  hie.length = depth + 1;
+  hie[depth] = parent;
+
+  isPapua = depth == 4 && hie[1] == '78203';
+  if (depth == 4) {
+    display_tps(parent);
+  } else {
+    display_aggregate(parent, depth, next_hie);
+  }
+
+  var s = '';
+  var t = '';
+  for (var i = 0; i < hie.length; i++) {
+    if (i > 0) { s += ' &raquo; '; t += ' > '; }
+    s += '<a href="javascript:set_hie(' + i + ', ' + hie[i] + '); void(0);">' + ids2names[hie[i]] + '</a>';
+    t += ids2names[hie[i]];
+  }
+  $('#hie').html(s);
+  $('#hie2').html(s);
+  document.title = t;
+  var ht = '0';
+  for (var i = 1; i <= depth; i++) {
+    ht += '.' + hie[i];
+  }
+  if (!dont_push_state)
+    history.pushState(null, null, '#' + ht);
+  return depth < 4;
+}
+
+function format(number) {
+  if (number == 0) return '0';
+  var nres = '' + number;
+  var res = '';
+  for (var i = 0; i < nres.length; i++) {
+    if (i > 0 && i % 3 == 0) {
+      res = '.' + res;
+    }
+    res = nres[nres.length - i - 1] + res;
+  }
+  return res;
+}
+
+function prefix_padd(num, cnt) {
+  num = num + '';
+  while (num.length < cnt) num = '0' + num;
+  return num;
+}
+
+function image_filename(p, t, h) {
+  return prefix_padd(p, 7) + prefix_padd(t, 3) + prefix_padd(h, 2);
+}
+
+function report_error(parent, tps_no, a, noalert) {
+  if (!noalert && !confirm("Jika scan tidak terbaca, click 'Ada Kesalahan Scan' dibawah potongan gambar. Tolong hanya laporkan 'Ada kesalahan data' jika angka yang dimasukkan tidak sama dengan yang di scan atau angka di scan salah jumlah. Pastikan anda telah mengecek 5 halaman dari KPU disebelah kiri (kadang terbalik balik halamannya).")) return;
+  $('#err_' + tps_no).html("Reporting error ...");
+  $.ajax(host + '/report/' + parent + '/' + tps_no, { cache: false }).done(function(data) {
+    display_tps(parent, tps_no);
+    // $('#err_' + tps_no).html("Error has been reported");
+  });
+}
+
+function report_error3(parent, tps_no, a, noalert) {
+  $('#err3_' + tps_no).html("Reporting error ...");
+  $.ajax(host + '/report3/' + parent + '/' + tps_no, { cache: false }).done(function(data) {
+    display_tps(parent, tps_no);
+    // $('#err3_' + tps_no).html("Error has been reported");
+  });
+}
+
+function get(id) {
+  var x = $('#' + id).val();
+  if (!$.isNumeric(x)) throw alert('Fail: ' + id + ' is not numeric -> ' + $('#' + id).val());
+  return parseInt(x);
+}
+
+function update_sum(prefix, tps_no) {
+  var prabowo = $('#' + prefix + '1_' + tps_no).val() || 0;
+  var jokowi = $('#' + prefix + '2_' + tps_no).val() || 0;
+  $('#' + prefix + '3_' + tps_no).val(parseInt(prabowo) + parseInt(jokowi));
+}
+
+function input_box(parent, tps_no, reported_by, entered_by) {
+  return 'Tolong masukkan angka<br>dari snippet di sebelah kiri<br>secara berurutan<br><br>' +
+    '<input type="text" size="5" id="input1_' + tps_no + '" onchange="update_sum(\'input\', ' + tps_no + ')"><br>' + 
+    '<input type="text" size="5" id="input2_' + tps_no + '" onchange="update_sum(\'input\', ' + tps_no + ')"><br>' + 
+    '<input type="text" size="5" id="input3_' + tps_no + '"><br>' + 
+    '<input type="text" size="5" id="input4_' + tps_no + '"><br>' + 
+    '<input type="submit" id="input5_' + tps_no + '" onclick="submit_tps(' + parent + ',' + tps_no + ')"><br><br>' +
+    error_report(parent, tps_no, reported_by, entered_by, 0, 0, 0, 0);
+}
+
+function update_sum3(tps_no, el) {
+  var a1 = parseInt($('#input3a1_' + tps_no).val() || 0);
+  var a2 = parseInt($('#input3a2_' + tps_no).val() || 0);
+  var a3 = parseInt($('#input3a3_' + tps_no).val() || 0);
+  var a4 = parseInt($('#input3a4_' + tps_no).val() || 0);
+
+  var b1 = parseInt($('#input3b1_' + tps_no).val() || 0);
+  var b2 = parseInt($('#input3b2_' + tps_no).val() || 0);
+  var b3 = parseInt($('#input3b3_' + tps_no).val() || 0);
+  var b4 = parseInt($('#input3b4_' + tps_no).val() || 0);
+
+  var ii1 = parseInt($('#input3ii1_' + tps_no).val() || 0);
+  var ii2 = parseInt($('#input3ii2_' + tps_no).val() || 0);
+  var ii3 = parseInt($('#input3ii3_' + tps_no).val() || 0);
+  var ii4 = parseInt($('#input3ii4_' + tps_no).val() || 0);
+
+  $('#input3a5_' + tps_no).val(a1 + a2 + a3 + a4);
+  $('#input3b5_' + tps_no).val(b1 + b2 + b3 + b4);
+  $('#input3ii4_' + tps_no).val(ii1 - ii2 - ii3);
+}
+
+function zero_blur(el) {
+  $(el).val(parseInt($(el).val() || 0));
+}
+
+function input_box3(parent, tps_no, reported_by, entered_by, onsubmit, action_url, a1, a2, a3, a4, b1, b2, b3, b4, ii1, ii2, ii3, ii4) {
+  console.log('onsubmit = ' + onsubmit + ' ' + action_url);
+  return 'Masukkan Jumlah di kiri<br><br>' +
+    '<input class="in3_' + tps_no + '" type="text" size="5" id="input3a1_' + tps_no + '" onchange="update_sum3(' + tps_no + ')" onblur="zero_blur(this)" value="' + (a1 === undefined ? '' : a1) + '"><br>' + 
+    '<input class="in3_' + tps_no + '" type="text" size="5" id="input3a2_' + tps_no + '" onchange="update_sum3(' + tps_no + ')" onblur="zero_blur(this)" value="' + (a2 === undefined ? '' : a2) + '"><br>' + 
+    '<input class="in3_' + tps_no + '" type="text" size="5" id="input3a3_' + tps_no + '" onchange="update_sum3(' + tps_no + ')" onblur="zero_blur(this)" value="' + (a3 === undefined ? '' : a3) + '"><br>' + 
+    '<input class="in3_' + tps_no + '" type="text" size="5" id="input3a4_' + tps_no + '" onchange="update_sum3(' + tps_no + ')" onblur="zero_blur(this)" value="' + (a4 === undefined ? '' : a4) + '"><br>' +
+    '<input class="in3_' + tps_no + '" type="text" size="5" id="input3a5_' + tps_no + '" disabled><br><br>' + 
+
+    '<input class="in3_' + tps_no + '" type="text" size="5" id="input3b1_' + tps_no + '" onchange="update_sum3(' + tps_no + ')" onblur="zero_blur(this)" value="' + (b1 === undefined ? '' : b1) + '"><br>' + 
+    '<input class="in3_' + tps_no + '" type="text" size="5" id="input3b2_' + tps_no + '" onchange="update_sum3(' + tps_no + ')" onblur="zero_blur(this)" value="' + (b2 === undefined ? '' : b2) + '"><br>' + 
+    '<input class="in3_' + tps_no + '" type="text" size="5" id="input3b3_' + tps_no + '" onchange="update_sum3(' + tps_no + ')" onblur="zero_blur(this)" value="' + (b3 === undefined ? '' : b3) + '"><br>' + 
+    '<input class="in3_' + tps_no + '" type="text" size="5" id="input3b4_' + tps_no + '" onchange="update_sum3(' + tps_no + ')" onblur="zero_blur(this)" value="' + (b4 === undefined ? '' : b4) + '"><br>' + 
+    '<input class="in3_' + tps_no + '" type="text" size="5" id="input3b5_' + tps_no + '" disabled><br><br>' + 
+
+    '<input class="in3_' + tps_no + '" type="text" size="5" id="input3ii1_' + tps_no + '" onchange="update_sum3(' + tps_no + ')" onblur="zero_blur(this)" value="' + (ii1 === undefined ? '' : ii1) + '"><br>' + 
+    '<input class="in3_' + tps_no + '" type="text" size="5" id="input3ii2_' + tps_no + '" onchange="update_sum3(' + tps_no + ')" onblur="zero_blur(this)" value="' + (ii2 === undefined ? '' : ii2) + '"><br>' + 
+    '<input class="in3_' + tps_no + '" type="text" size="5" id="input3ii3_' + tps_no + '" onchange="update_sum3(' + tps_no + ')" onblur="zero_blur(this)" value="' + (ii3 === undefined ? '' : ii3) + '"><br>' + 
+    '<input class="in3_' + tps_no + '" type="text" size="5" id="input3ii4_' + tps_no + '" value="' + (ii4 === undefined ? '' : ii4) + '"><br><br>' + 
+
+    '<input class="in3_' + tps_no + '" type="submit" onclick="' + onsubmit + '(' + parent + ',' + tps_no + ',\'' + action_url + '\')"><br><br>';
+    // error_report3(parent, tps_no, reported_by, entered_by, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+}
+
+function submit_tps3(parent, tps_no, action_url) {
+  var a1 = get('input3a1_' + tps_no);
+  var a2 = get('input3a2_' + tps_no);
+  var a3 = get('input3a3_' + tps_no);
+  var a4 = get('input3a4_' + tps_no);
+
+  var b1 = get('input3b1_' + tps_no);
+  var b2 = get('input3b2_' + tps_no);
+  var b3 = get('input3b3_' + tps_no);
+  var b4 = get('input3b4_' + tps_no);
+
+  var ii1 = get('input3ii1_' + tps_no);
+  var ii2 = get('input3ii2_' + tps_no);
+  var ii3 = get('input3ii3_' + tps_no);
+  var ii4 = get('input3ii4_' + tps_no);
+
+  $('.in3_' + tps_no).prop('disabled', true);
+
+  $.ajax('/' + action_url + '/' + parent + '/' + tps_no + 
+      '/' + a1 + '/' + a2 + '/' + a3 + '/' + a4 +
+      '/' + b1 + '/' + b2 + '/' + b3 + '/' + b4 +
+      '/' + ii1 + '/' + ii2 + '/' + ii3 + '/' + ii4, { cache: false }).done(function(data) {
+    if (data.received == 'ok') {
+    } else if (data.received == 'exists') {
+      alert('Fail: form ini sudah terisi (oleh orang lain)');
+    } else {
+      return alert('Fail: unknown error (hubungi admin bila ini tetap berlanjut)');
+    }
+
+    var values = gen_values3(parent, false, tps_no, a1, a2, a3, a4, b1, b2, b3, b4, ii1, ii2, ii3, ii4, 'me', 0);
+    $('#csval3_' + tps_no).html(values);
+    $('#csval3_' + tps_no).css('background-color', 'white');
+
+    setTimeout(function () {
+      $('#input3a1_' + (tps_no + 1)).focus();
+      $(window).scrollTop($('#input3a1_' + (tps_no + 1)).position().top - 150);
+    }, 100);
+
+    get_fb('me', function (res) {
+      if (res.link && res.name) {
+        $('#input_box3_' + tps_no).html('<a href="' +res.link+ '" target="_blank">' + res.name + '</a>');
+      }
+    });
+  });
+}
+
+function submit_tps(parent, tps_no) {
+  var prabowo = get('input1_' + tps_no);
+  var jokowi = get('input2_' + tps_no);
+  var valid = get('input3_' + tps_no);
+  var invalid = get('input4_' + tps_no);
+
+  $('#input1_' + tps_no).prop('disabled', true);
+  $('#input2_' + tps_no).prop('disabled', true);
+  $('#input3_' + tps_no).prop('disabled', true);
+  $('#input4_' + tps_no).prop('disabled', true);
+  $('#input5_' + tps_no).prop('disabled', true);
+
+  $.ajax('/submit_tps_rel/' + parent + '/' + tps_no + '/' + prabowo + '/' + jokowi + '/' + valid + '/' + invalid, { cache: false }).done(function(data) {
+    if (data.received == 'ok') {
+    } else if (data.received == 'exists') {
+      alert('Fail: form ini sudah terisi (oleh orang lain)');
+    } else {
+      return alert('Fail: unknown error (hubungi admin bila ini tetap berlanjut)');
+    }
+
+    var values = gen_values(parent, false, tps_no, prabowo, jokowi, valid, invalid, 'me', 0);
+    $('#csval_' + tps_no).html(values);
+
+    setTimeout(function () {
+      $('#input1_' + (tps_no + 1)).focus();
+      $(window).scrollTop($('#input1_' + (tps_no + 1)).position().top - 400);
+    }, 100);
+
+    get_fb('me', function (res) {
+      if (res.link && res.name) {
+        $('#input_box_' + tps_no).html('<a href="' +res.link+ '" target="_blank">' + res.name  + '</a>');
+      }
+    });
+  });
+}
+
+function resolve_fbguys() {
+  $('.fbguy').each(function (i, el) {
+    get_fb($(el).html(), function (res) {
+      if (res.link && res.name) {
+        $(el).html('<a href="' +res.link+ '" target="_blank" style="font-weight:bold">' + res.name + '</a>');
+      }
+    });
+  });
+}
+
+function submit_fix_error_tps(parent, tps_no) {
+  var prabowo = get('fix_input1_' + tps_no);
+  var jokowi = get('fix_input2_' + tps_no);
+  var valid = get('fix_input3_' + tps_no);
+  var invalid = get('fix_input4_' + tps_no);
+
+  $('#fix_input1_' + tps_no).prop('disabled', true);
+  $('#fix_input2_' + tps_no).prop('disabled', true);
+  $('#fix_input3_' + tps_no).prop('disabled', true);
+  $('#fix_input4_' + tps_no).prop('disabled', true);
+  $('#fix_input5_' + tps_no).prop('disabled', true);
+
+  $.ajax('/fix_error/' + parent + '/' + tps_no + '/' + prabowo + '/' + jokowi + '/' + valid + '/' + invalid, { cache: false }).done(function(data) {
+    if (data.received == 'ok') {
+      display_tps(parent);
+    } else if (data.received == 'exists') {
+      alert('Fail: form ini sudah terisi (oleh orang lain)');
+    } else {
+      return alert('Fail: unknown error (hubungi admin bila ini tetap berlanjut)');
+    }
+  });
+}
+
+function fix_error(parent, tps_no, prabowo, jokowi, valid, invalid) {
+  $('#fix_p_' + tps_no).html('Masukkan perbaikan:<br><br><input type="text" size="5" id="fix_input1_' +
+      tps_no + '" onchange="update_sum(\'fix_input\', ' + tps_no + ')" value="' + prabowo + '"><br>' + 
+    '<input type="text" size="5" id="fix_input2_' + tps_no +
+      '" onchange="update_sum(\'fix_input\', ' + tps_no + ')" value="' + jokowi + '"><br>' + 
+    '<input type="text" size="5" id="fix_input3_' + tps_no + '" value="' + valid + '"><br>' + 
+    '<input type="text" size="5" id="fix_input4_' + tps_no + '" value="' + invalid + '"><br>' + 
+    '<input type="submit" id="fix_input5_' + tps_no + '" onclick="submit_fix_error_tps(' + parent + ',' + tps_no + ')"><br><br>');
+  setTimeout(function () { $('#fix_input1_' + tps_no).focus(); }, 100);
+}
+
+function fix_error3(parent, tps_no, a1, a2, a3, a4, b1, b2, b3, b4, ii1, ii2, ii3, ii4) {
+  $('#csval3_' + tps_no).html('Masukkan perbaikan:<br><br>' + 
+    input_box3(parent, tps_no, false, false, 'submit_tps3', 'fix_error3', a1, a2, a3, a4, b1, b2, b3, b4, ii1, ii2, ii3, ii4));
+  setTimeout(function () { update_sum3(tps_no); }, 100);
+}
+
+function error_report(parent, tps_no, reported_by, entered_by, prabowo, jokowi, valid, invalid) {
+  var err = '';
+  if (reported_by) {
+    err += 'Ada kesalahan data<br>yang dilaporkan oleh:<br><span class="fbguy">' + reported_by +
+      '</span><br><br><span id="fbid_' + tps_no + '_' + entered_by + '"></span>';
+    if (whitelisted && entered_by) {
+      err += '<p id="fix_p_' + tps_no + '"><a href="javascript:fix_error(' + parent + ',' + tps_no + ',' +
+        prabowo + ',' + jokowi + ',' + valid + ',' + invalid + '); void(0);">Perbaiki Data</a></p>';
+    }
+    get_fb('me', function (res) {
+      if (res.id == reported_by) {
+        setTimeout(function () {
+          $('#fbid_' + tps_no + '_' + entered_by).html('Laporkan bahwa:<br><a id="err_' + tps_no +
+            '" href="javascript:report_error(' + parent + ',' + tps_no +', this, 1); void(0);">Data telah diperbaiki</a>');
+        }, 100);
+      }
+    })
+  } else {
+    err += 'Laporkan bahwa:<br><a id="err_' + tps_no + '" href="javascript:report_error(' +
+      parent + ',' + tps_no +', this); void(0);">Ada kesalahan data!</a><br><br>';
+  }
+  return err;
+}
+
+function gen_values(parent, reported_by, tps_no, prabowo, jokowi, valid, invalid, entered_by, max_dpt) {
+  var err = error_report(parent, tps_no, reported_by, entered_by, prabowo, jokowi, valid, invalid);
+  var siluman = (max_dpt && valid + invalid > max_dpt) ? (' (' + (valid + invalid - max_dpt)) + ' siluman)' : '';
+  return '<table>' +
+    '<tr><td>Prabowo:<td id="tps_id1_' + tps_no + '">' + prabowo +
+    '<tr><td>Jokowi:<td id="tps_id2_' + tps_no + '">' + jokowi +
+    '<tr><td>Suara sah:<td id="tps_id3_' + tps_no + '" ' + (prabowo + jokowi == valid ? '' : 'bgcolor=magenta') +'>' + valid +
+    '<tr><td>Tidak sah:<td id="tps_id4_' + tps_no + '">' + invalid +
+    '<tr><td colspan=2>&nbsp;' +
+    '<tr><td>Max DPT:<td id="tps_id5_' + tps_no + '" ' + (siluman ? 'bgcolor=magenta' : '') + '>' +
+       (max_dpt ? max_dpt : '?') + siluman +
+    '<tr><td>Entered by: &nbsp; <td id="input_box_'+ tps_no +'" align=center>' +
+      '<span class="fbguy">' + entered_by + '</span>' +
+    '<tr height=80><th colspan=2><br><br>' + err +
+  '</table>';
+}
+
+function error_report3(parent, tps_no, reported_by, entered_by, a1, a2, a3, a4, b1, b2, b3, b4, ii1, ii2, ii3, ii4) {
+  var err = '';
+  if (reported_by) {
+    err += 'Ada kesalahan data<br>yang dilaporkan oleh:<br><span class="fbguy">' + reported_by +
+      '</span><br><br><span id="fbid3_' + tps_no + '_' + entered_by + '"></span>';
+    if (whitelisted && entered_by) {
+      err += '<p id="fix_p3_' + tps_no + '"><a href="javascript:fix_error3(' + parent + ',' + tps_no +
+        ',' + a1 + ',' + a2 + ',' + a3 + ',' + a4 +
+        ',' + b1 + ',' + b2 + ',' + b3 + ',' + b4 +
+        ',' + ii1 + ',' + ii2 + ',' + ii3 + ',' + ii4 +
+        '); void(0);">Perbaiki Data</a></p>';
+    }
+    get_fb('me', function (res) {
+      if (res.id == reported_by) {
+        setTimeout(function () {
+          $('#fbid3_' + tps_no + '_' + entered_by).html('Laporkan bahwa:<br><a id="err3_' + tps_no +
+            '" href="javascript:report_error3(' + parent + ',' + tps_no +', this, 1); void(0);">Data telah diperbaiki</a>');
+        }, 100);
+      }
+    })
+  } else {
+    err += 'Laporkan bahwa:<br><a id="err3_' + tps_no + '" href="javascript:report_error3(' +
+      parent + ',' + tps_no +', this); void(0);">Ada kesalahan data!</a><br><br>';
+  }
+  return err;
+}
+
+function gen_values3(parent, reported_by, tps_no, a1, a2, a3, a4, b1, b2, b3, b4, ii1, ii2, ii3, ii4, entered_by, sts) {
+  var err = error_report3(parent, tps_no, reported_by, entered_by, a1, a2, a3, a4, b1, b2, b3, b4, ii1, ii2, ii3, ii4);
+  var a5 = a1 + a2 + a3 + a4;
+  var b5 = b1 + b2 + b3 + b4;
+  return '<table>' +
+    '<tr><th colspan=2 align=left>Pemilih' + 
+    '<tr><td>DPT:<td id="tps3a_id1_' + tps_no + '">' + a1 +
+    '<tr><td>DPTb:<td id="tps3a_id2_' + tps_no + '">' + a2 +
+    '<tr><td>DPK:<td id="tps3a_id3_' + tps_no + '">' + a3 +
+    '<tr><td>DPKTb:<td id="tps3a_id4_' + tps_no + '">' + a4 +
+    '<tr><td>Jumlah:<td id="tps3a_id5_' + tps_no + '">' + a5 +
+    '<tr><th colspan=2 align=left>Pengguna' + 
+    '<tr><td>DPT:<td id="tps3b_id1_' + tps_no + '">' + b1 +
+    '<tr><td>DPTb:<td id="tps3b_id2_' + tps_no + '">' + b2 + ((b2 > a2) ? ' &nbsp; <b style="color:red">J3</b>' : '') +
+    '<tr><td>DPK:<td id="tps3b_id3_' + tps_no + '">' + b3 +
+    '<tr><td>DPKTb:<td id="tps3b_id4_' + tps_no + '">' + b4 + ((b4 > a4) ? ' &nbsp; <b style="color:red">J4</b>' : '') +
+    '<tr><td>Jumlah:<td id="tps3b_id5_' + tps_no + '">' + b5 + ((b5 != ii4 || (sts && b5 != sts)) ? ' &nbsp; <b style="color:red">J1</b>' : '') +
+    '<tr><th colspan=2 align=left>Uraian' + 
+    '<tr><td>Diterima:<td id="tps3c_id1_' + tps_no + '">' + ii1 +
+    '<tr><td>Dikembalikan:<td id="tps3c_id2_' + tps_no + '">' + ii2 +
+    '<tr><td>Tak Terpakai:<td id="tps3c_id3_' + tps_no + '">' + ii3 +
+    '<tr><td>Digunakan:<td id="tps3c_id4_' + tps_no + '">' + ii4 +
+      (b5 != ii4? ' &nbsp; <b style="color:red">J1</b>' : '') +
+      ((sts && (ii4 != sts))? ' &nbsp; <b style="color:red">J2</b>' : '') +
+      ((ii1 - ii2 - ii3 != ii4) ? ' &nbsp; <b style="color:red">J6</b>' : '') +
+    '<tr><td colspan=2>&nbsp;' +
+    '<tr><td>Entered by: &nbsp; <td id="input_box3_'+ tps_no +'" align=center>' +
+      '<span class="fbguy">' + entered_by + '</span>' +
+    '<tr><th colspan=2><br>' + err +
+  '</table>';
+}
+
+function lapor_salah_scan(hal, parent, tps_no) {
+  $.ajax(host + '/report_h' + hal + '/' + parent + '/' + tps_no, { cache: false }).done(function(data) {
+    if (data.status == 'fixed') {
+      $('#hal' + hal + 'scan_' + tps_no).css('background-color', 'white');
+      $('#hal' + hal + 'a_' + tps_no).html('Ada Kesalahan Scan');
+      $('#hal' + hal + 'p_' + tps_no).html('');
+    } else if (data.status == 'reported') {
+      $('#hal' + hal + 'scan_' + tps_no).css('background-color', '#ffaaaa');
+      $('#hal' + hal + 'a_' + tps_no).html('Kesalahan Scan<br>Telah Diperbaiki');
+    } else {
+      alert(JSON.stringify(data));
+    }
+  });
+}
+
+function display_tps(parent) {
+  $('#msg_status').html('Fetching ...');
+  $('#msg_status2').html('Fetching ...');
+  $.ajax(host + '/api/tps/' + parent + '/872836527', { cache: false }).done(function(data) {
+    $('#msg_status').html('');
+    $('#msg_status2').html('');
+    var s = '<table border="1"><thead><tr>\
+      <th width="60">TPS\
+      <th width="350" colspan="2">C1 halaman 3\
+      <th width="425" colspan="2">C1 halaman 4\
+      <th width="200">Comments' +
+      (!isPapua ? '' : '<th width="350">C1 halaman 1</th> <th width="350">C1 halaman 2</th>') +
+    '</thead><tbody>';
+    var tps_pending = 0;
+    var tps_pending3 = 0;
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      var tps_no = r[0];
+      var max_dpt = r[1];
+      var has_scan = r[6];
+      var has_error = (r[7] == '0') ? false : r[7];
+      var entered_by = (r[8] == '0') ? 0 : r[8];
+      var comment = r[9];
+      var a1 = r[10];
+      var a2 = r[11];
+      var a3 = r[12];
+      var a4 = r[13];
+      var b1 = r[14];
+      var b2 = r[15];
+      var b3 = r[16];
+      var b4 = r[17];
+      var ii1 = r[18];
+      var ii2 = r[19];
+      var ii3 = r[20];
+      var ii4 = r[21];
+      var entered3_by = (r[22] == '0') ? 0 : r[22];
+      var has_error3 = (r[23] == '0') ? 0 : r[23];
+      var report3 = (r[24] == '0') ? 0 : r[24];
+      var report4 = (r[25] == '0') ? 0 : r[25];
+      if (comment) comment = comment.substr(4);
+      var is_pending = !r[2] && !r[3] && !r[4] && !r[5] && !entered_by;
+      var is_pending3 = !a1 && !entered3_by;
+      var num3 = image_filename(parent, tps_no, 3);
+      var num = image_filename(parent, tps_no, 4);
+      var num1 = image_filename(parent, tps_no, 1);
+      var num2 = image_filename(parent, tps_no, 2);
+      if (is_pending && !tps_pending) tps_pending = tps_no;
+      if (is_pending3 && !tps_pending3) tps_pending3 = tps_no;
+      s += '<tr><td>#' + tps_no + '<br><br>' +
+          '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + image_filename(parent, tps_no, 1) + '.jpg" target="_blank">Hal 1</a><br><br>' +
+          '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + image_filename(parent, tps_no, 2) + '.jpg" target="_blank">Hal 2</a><br><br>' +
+          '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + image_filename(parent, tps_no, 3) + '.jpg" target="_blank">Hal 3</a><br><br>' +
+          '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + image_filename(parent, tps_no, 4) + '.jpg" target="_blank">Hal 4</a><br><br>' +
+          '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + image_filename(parent, tps_no, 5) + '.jpg" target="_blank">Hal 5</a><br><br>' +
+
+        '<td style="padding:15px" align=center ' + (report3 ? 'bgcolor=#ffaaaa' : '') + ' id="hal3scan_'+ tps_no+'">' +
+          '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + num3 + '.jpg" target="_blank">' +
+          '<div style="width: 150px; height: 420px; overflow: hidden;">' +
+          '<img style="position: relative; top: -100px; left: -450px;" width="600" src="http://scanc1.kpu.go.id/viewp.php?f='+ num3 +'.jpg">' +
+        '</div></a>' + (report3 ? '<p id="hal3p_'+tps_no+'">Ada kesalahan<br>dilaporkan oleh<br><span class="fbguy">' + report3 + '</span></p>' : '') +
+        '<p>Lapor Bahwa:<br><a href="javascript:lapor_salah_scan(3, '+parent+', '+tps_no+'); void(0);" id="hal3a_'+tps_no+'">'+
+          (report3 ? 'Kesalahan Scan<br>Telah Diperbaiki' : 'Ada Kesalahan Scan') + '</a></p>' +
+        '<td align=center ' + (has_error3 ? 'bgcolor=#ffaaaa' : '') + ' id="csval3_'+ tps_no +'">' +
+          (!entered3_by ? input_box3(parent, tps_no, has_error3, entered3_by, 'submit_tps3', 'submit_tps3_rel') :
+          gen_values3(parent, has_error3, tps_no, a1, a2, a3, a4, b1, b2, b3, b4, ii1, ii2, ii3, ii4, entered3_by, r[4] + r[5])) +
+
+        '<td style="padding:15px" align=center ' + (report4 ? 'bgcolor=#ffaaaa' : '') + ' id="hal4scan_'+ tps_no+'">' +
+          '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + num + '.jpg" target="_blank">' +
+          '<div style="width: 200px; height: 420px; overflow: hidden;">' +
+            '<img style="position: relative; left: -450px; top: -100px;" width="600" src="http://scanc1.kpu.go.id/viewp.php?f=' + num + '.jpg"></div></a>' +
+          (report4 ? '<p id="hal4p_'+tps_no+'">Ada kesalahan<br>dilaporkan oleh<br><span class="fbguy">' + report4 + '</span></p>' : '') +
+          '<p>Lapor Bahwa:<br><a href="javascript:lapor_salah_scan(4, '+parent+', '+tps_no+'); void(0);" id="hal4a_'+tps_no+'">'+
+          (report4 ? 'Kesalahan Scan<br>Telah Diperbaiki' : 'Ada Kesalahan Scan') + '</a>' +
+        '<td align=center ' + (has_error ? 'bgcolor=#ffaaaa' : '') + ' id="csval_'+ tps_no +'">' + (has_scan ? (!entered_by ? input_box(parent, tps_no, has_error, entered_by) :
+          gen_values(parent, has_error, tps_no, r[2], r[3], r[4], r[5], entered_by, max_dpt)) : 'N / A') +
+        '<td style="max-width:300px">' + comment +
+        (!isPapua ? '' :
+          '<td style="padding:15px" align=center id="hal1scan_'+ tps_no+'">' +
+            '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + num1 + '.jpg" target="_blank">' +
+            '<div style="width: 200px; height: 420px; overflow: hidden;">' +
+              '<img style="position: relative; left: -450px; top: -100px;" width="600" src="http://scanc1.kpu.go.id/viewp.php?f=' + num1 + '.jpg"></div></a>' +
+          '<td style="padding:15px" align=center id="hal2scan_'+ tps_no+'">' +
+            '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + num2 + '.jpg" target="_blank">' +
+            '<div style="width: 200px; height: 420px; overflow: hidden;">' +
+              '<img style="position: relative; left: -450px; top: -100px;" width="600" src="http://scanc1.kpu.go.id/viewp.php?f=' + num2 + '.jpg"></div></a>'
+        );
+    }
+    document.getElementById('tbl').innerHTML = s + '</tbody></table>';
+    resolve_fbguys();
+    console.log('tps3 pending = ' + tps_pending3);
+    setTimeout(function () {
+      var i = $('#input3a1_' + tps_pending3);
+      if (i.length > 0) {
+        i.focus();
+        var el = i.position();
+        if (el) $(window).scrollTop(el.top - 150);
+      } else {
+        $('#input1_' + tps_pending).focus();
+        var el = $('#input1_' + tps_pending).position();
+        if (el) $(window).scrollTop(el.top - 400);
+      }
+    }, 100);
+  });
+}
+
+function percent(rat) {
+  if (isNaN(rat)) return '0.00';
+  var p = Math.floor(rat * 10000);
+  return Math.floor(p / 100) + '.' + prefix_padd(p % 100, 2);
+}
+
+function replace_char(s, index, ch) {
+  return s.substr(0, index) + ch + s.substr(index + 1);
+}
+
+function display_aggregate(parent, depth, next_hie) {
+  $('#msg_status').html('Fetching ...');
+  $('#msg_status2').html('Fetching ...');
+  $.ajax(host + '/api/children/' + parent, {
+    cache: false,
+    dataType: "text", // expect back a text to sanitize errors.
+    error: function (xhr, status, error) {
+      console.log(status);
+      console.error(error);
+    },
+    success: function( data_txt ) {
+    // Bugs:
+    var x = data_txt.indexOf("PALENGA'\"AN");
+    if (x != -1) data_txt = replace_char(data_txt, x + 8, '\'');
+    x = data_txt.indexOf("RA'\"AS");
+    if (x != -1) data_txt = replace_char(data_txt, x + 3, '\'');
+    var data = JSON.parse(data_txt);
+
+    $('#msg_status').html('');
+    $('#msg_status2').html('');
+
+    var chk_j1 = $('#j1_chk').prop('checked');
+    var chk_j2 = $('#j2_chk').prop('checked');
+    var chk_j3 = $('#j3_chk').prop('checked');
+    var chk_j4 = $('#j4_chk').prop('checked');
+    var chk_j5 = $('#j5_chk').prop('checked');
+    var chk_j6 = $('#j6_chk').prop('checked');
+    var chk_j7 = $('#j7_chk').prop('checked');
+    var chk_b2 = $('#b2_chk').prop('checked');
+    var chk_b4 = $('#b4_chk').prop('checked');
+
+    var s = '<table class="aggregate" border="0" cellspacing="2"><thead><tr>\
+      <th rowspan=2 width="40">No\
+      <th rowspan=2 width="225">Tempat\
+      <th rowspan=2 width="120" colspan="2">Prabowo-Hatta\
+      <th rowspan=2 width="120" colspan="2">Jokowi-JK\
+      <th rowspan=2 width="70">Suara sah\
+      <th rowspan=2 width="70">Tidak sah' +
+      (chk_j1 ? '<th colspan=1 width="60">Janggal #1' : '') +
+      (chk_j2 ? '<th colspan=1 width="60">Janggal #2' : '') +
+      (chk_j3 ? '<th colspan=1 width="60">Janggal #3' : '') +
+      (chk_j4 ? '<th colspan=1 width="60">Janggal #4' : '') +
+      (chk_j5 ? '<th colspan=1 width="60">Janggal #5' : '') +
+      (chk_j6 ? '<th colspan=1 width="60">Janggal #6' : '') +
+      (chk_j7 ? '<th colspan=1 width="60">Janggal #7' : '') +
+      (chk_b2 ? '<th rowspan=2 width="60">B2 DPTb' : '') +
+      (chk_b4 ? '<th rowspan=2 width="60">B4 DPKTb' : '') +
+      '<th colspan=3 width="120">Halaman 3\
+      <th colspan=3 width="120">Halaman 4\
+      <th rowspan=2 width="60">Total TPS\
+    <tr style="background-color: #CCC;">' +
+      (chk_j1 ? '<th width="60">#TPS / Suara' : '') +
+      (chk_j2 ? '<th width="60">#TPS / Suara' : '') +
+      (chk_j3 ? '<th width="60">#TPS / Suara' : '') +
+      (chk_j4 ? '<th width="60">#TPS / Suara' : '') +
+      (chk_j5 ? '<th width="60">#TPS' : '') +
+      (chk_j6 ? '<th width="60">#TPS / Suara' : '') +
+      (chk_j7 ? '<th width="60">#TPS' : '') +
+      '<th width="60">Scan<br>Error\
+      <th width="60">Entry<br>Error\
+      <th width="60">%Fin\
+      <th width="60">Scan<br>Error\
+      <th width="60">Entry<br>Error\
+      <th width="60">%Fin\
+    </thead><tbody>';
+
+    var total = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    var now = new Date().getTime() / 1000;
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      var prabowo_count = r[2];
+      var jokowi_count = r[3];
+      var valid_count = r[4];
+      var invalid_count = r[5];
+      var errors_count = r[6];
+      var entered_count = r[7];
+      var pending_count = r[8];
+      var tps_count = r[9];
+      var siluman_count = r[10];
+      var h3_errors = r[11];
+      var h4_errors = r[12];
+      var j1_count = r[13];
+      var j2_count = r[14];
+      var j3_count = r[15];
+      var j4_count = r[16];
+      var entered3_count = r[17];
+      var errors3_count = r[18];
+      var g1_count = r[19];
+      var g2_count = r[20];
+      var g3_count = r[21];
+      var g4_count = r[22];
+      var last_mod = (now - r[23]) / 60;
+      var a1_count = r[24];
+      var a2_count = r[25];
+      var a3_count = r[26];
+      var a4_count = r[27];
+      var b1_count = r[28];
+      var b2_count = r[29];
+      var b3_count = r[30];
+      var b4_count = r[31];
+      var j5_count = r[32];
+      var j6_count = r[33];
+      var g6_count = r[34];
+      var j7_count = r[35];
+      var delta_sah = valid_count - (prabowo_count + jokowi_count);
+      var prabowo_percent = percent(prabowo_count / (prabowo_count + jokowi_count)) + '%';
+      var jokowi_percent = percent(jokowi_count / (prabowo_count + jokowi_count)) + '%';
+      for (var j = 2; j <= 35; j++) total[j] += r[j];
+
+      ids2names[r[0]] = r[1];
+      var sort_of_done_entered3 = (percent(entered3_count / tps_count) >= 99) ? 'bgcolor=lightgreen' : '';
+      var sort_of_done_entered = (percent(entered_count / tps_count) >= 99) ? 'bgcolor=lightgreen' : '';
+      var sort_of_done_available = (percent(pending_count / tps_count) >= 99) ? 'bgcolor=lightgreen' : '';
+      s += '<tr><td align=center>' + (i + 1) +
+        '<td '+ (last_mod < 60 ? 'bgcolor=yellow' : '') +'><a href="javascript:set_hie(' + (depth + 1) + ',' + r[0] +'); void(0);">' + r[1] + '</a>' +
+        '<td align=right width=60>' + format(prabowo_count) +
+        '<td align=right ' + (prabowo_count > jokowi_count ? "bgcolor=lightgreen" : "") + '>' + prabowo_percent +
+        '<td align=right width=60>' + format(jokowi_count) +
+        '<td align=right ' + (prabowo_count < jokowi_count ? "bgcolor=lightgreen" : "") + '>' + jokowi_percent +
+        '<td align=right ' + (delta_sah ? 'bgcolor=lightpink' : '') +'>' +
+          (delta_sah ? ('(' + delta_sah + ') ') : '') + format(valid_count) +
+        '<td align=right>' + format(invalid_count) +
+        (chk_j1 ? '<td align=right '+ (j1_count ? 'bgcolor=lightpink' : '') +'>' + format(j1_count) + ' / ' + format(g1_count) : '') + 
+        (chk_j2 ? '<td align=right '+ (j2_count ? 'bgcolor=lightpink' : '') +'>' + format(j2_count) + ' / ' + format(g2_count) : '') + 
+        (chk_j3 ? '<td align=right '+ (j3_count ? 'bgcolor=lightpink' : '') +'>' + format(j3_count) + ' / ' + format(g3_count) : '') + 
+        (chk_j4 ? '<td align=right '+ (j4_count ? 'bgcolor=lightpink' : '') +'>' + format(j4_count) + ' / ' + format(g4_count) : '') + 
+        (chk_j5 ? '<td align=right '+ (j5_count ? 'bgcolor=lightpink' : '') +'>' + format(j5_count) : '') +
+        (chk_j6 ? '<td align=right '+ (j6_count ? 'bgcolor=lightpink' : '') +'>' + format(j6_count) + ' / ' + format(g6_count) : '') + 
+        (chk_j7 ? '<td align=right '+ (j7_count ? 'bgcolor=lightpink' : '') +'>' + format(j7_count) : '') + 
+        (chk_b2 ? '<td align=right >' + format(b2_count) : '') + 
+        (chk_b4 ? '<td align=right >' + format(b4_count) : '') + 
+        '<td align=right '+ (h3_errors ? 'bgcolor=lightpink' : '') +'>' + format(h3_errors) +
+        '<td align=right '+ (errors3_count ? 'bgcolor=lightpink' : '') +'>' + format(errors3_count) +
+        '<td align=right nowrap '+sort_of_done_entered3+'>' + /* format(entered3_count) + ' / ' + */ percent(entered3_count / pending_count) + '%' +
+        '<td align=right '+ (h4_errors ? 'bgcolor=lightpink' : '') +'>' + format(h4_errors) +
+        '<td align=right '+ (errors_count ? 'bgcolor=lightpink' : '') +'>' + format(errors_count) +
+        '<td align=right nowrap '+sort_of_done_entered+'>' + /* format(entered_count) + ' / ' + */ percent(entered_count / pending_count) + '%' +
+        '<td align=right>' + format(tps_count);
+    }
+
+    var prabowo_count = total[2];
+    var jokowi_count = total[3];
+    var valid_count = total[4];
+    var invalid_count = total[5];
+    var errors_count = total[6];
+    var entered_count = total[7];
+    var pending_count = total[8];
+    var tps_count = total[9];
+    var siluman_count = total[10];
+    var h3_errors = total[11];
+    var h4_errors = total[12];
+    var j1_count = total[13];
+    var j2_count = total[14];
+    var j3_count = total[15];
+    var j4_count = total[16];
+    var entered3_count = total[17];
+    var errors3_count = total[18];
+    var g1_count = total[19];
+    var g2_count = total[20];
+    var g3_count = total[21];
+    var g4_count = total[22];
+    // var last_mod = total[23];
+    var a1_count = total[24];
+    var a2_count = total[25];
+    var a3_count = total[26];
+    var a4_count = total[27];
+    var b1_count = total[28];
+    var b2_count = total[29];
+    var b3_count = total[30];
+    var b4_count = total[31];
+    var j5_count = total[32];
+    var j6_count = total[33];
+    var g6_count = total[34];
+    var j7_count = total[35];
+    var delta_sah = valid_count - (prabowo_count + jokowi_count);
+    var prabowo_percent = percent(prabowo_count / (prabowo_count + jokowi_count)) + '%';
+    var jokowi_percent = percent(jokowi_count / (prabowo_count + jokowi_count)) + '%';
+    var sort_of_done_entered3 = (percent(entered3_count / tps_count) >= 99) ? 'bgcolor=lightgreen' : '';
+    var sort_of_done_entered = (percent(entered_count / tps_count) >= 99) ? 'bgcolor=lightgreen' : '';
+    var sort_of_done_available = (percent(pending_count / tps_count) >= 99) ? 'bgcolor=lightgreen' : '';
+    s += '<tr><td>&nbsp;' +
+      '<th align="right">TOTAL: &nbsp; ' +
+      '<td align=right width=60>' + format(prabowo_count) +
+      '<td align=right ' + (prabowo_count > jokowi_count ? "bgcolor=lightgreen" : "") + '>' + prabowo_percent +
+      '<td align=right width=60>' + format(jokowi_count) +
+      '<td align=right ' + (prabowo_count < jokowi_count ? "bgcolor=lightgreen" : "") + '>' + jokowi_percent +
+      '<td align=right ' + (delta_sah ? 'bgcolor=lightpink' : '') +'>' +
+        (delta_sah ? ('(' + delta_sah + ') ') : '') + format(valid_count) +
+      '<td align=right>' + format(invalid_count) +
+      (chk_j1 ? '<td align=right nowrap '+ (j1_count ? 'bgcolor=lightpink' : '') +'>' + format(j1_count) + ' / ' + format(g1_count) : '') + 
+      (chk_j2 ? '<td align=right nowrap '+ (j2_count ? 'bgcolor=lightpink' : '') +'>' + format(j2_count) + ' / ' + format(g2_count) : '') + 
+      (chk_j3 ? '<td align=right nowrap '+ (j3_count ? 'bgcolor=lightpink' : '') +'>' + format(j3_count) + ' / ' + format(g3_count) : '') + 
+      (chk_j4 ? '<td align=right nowrap '+ (j4_count ? 'bgcolor=lightpink' : '') +'>' + format(j4_count) + ' / ' + format(g4_count) : '') + 
+      (chk_j5 ? '<td align=right nowrap '+ (j5_count ? 'bgcolor=lightpink' : '') +'>' + format(j5_count) : '') +
+      (chk_j6 ? '<td align=right nowrap '+ (j6_count ? 'bgcolor=lightpink' : '') +'>' + format(j6_count) + ' / ' + format(g6_count) : '') + 
+      (chk_j7 ? '<td align=right nowrap '+ (j7_count ? 'bgcolor=lightpink' : '') +'>' + format(j7_count) : '') + 
+      (chk_b2 ? '<td align=right >' + format(b2_count) : '') + 
+      (chk_b4 ? '<td align=right >' + format(b4_count) : '') + 
+      '<td align=right '+ (h3_errors ? 'bgcolor=lightpink' : '') +'>' + format(h3_errors) +
+      '<td align=right '+ (errors3_count ? 'bgcolor=lightpink' : '') +'>' + format(errors3_count) +
+      '<td align=right nowrap '+sort_of_done_entered3+'>' + /* format(entered3_count) + ' / ' + */ percent(entered3_count / pending_count) + '%' +
+      '<td align=right '+ (h4_errors ? 'bgcolor=lightpink' : '') +'>' + format(h4_errors) +
+      '<td align=right '+ (errors_count ? 'bgcolor=lightpink' : '') +'>' + format(errors_count) +
+      '<td align=right nowrap '+sort_of_done_entered+'>' + /* format(entered_count) + ' / ' + */ percent(entered_count / pending_count) + '%' +
+      '<td align=right>' + format(tps_count) +
+      '</tbody></table>';
+
+    if (next_hie && next_hie()) {
+      console.log("next hie is true for " + parent + " " + depth);
+      return; // Do nothing, already rendered.
+    }
+
+    $('#tbl').html(s);
+  }});
+}
+
+function update_hie(depth) {
+  if (location.hash == '#_=_') {
+    location.hash = '#0';
+  }
+  if (location.hash == "") {
+    set_hie(0, 0);
+    return false;
+  }
+  var arr = location.hash.substr(1).split('.');
+  if (!ids2names[arr[depth]]) {
+    console.log("No name for " + arr[depth]);
+    return false;
+  }
+  return set_hie(depth, arr[depth], true, function() { return update_hie(depth + 1);});
+}
+
+function reload() {
+  return update_hie(0);
+}
+
+window.onhashchange = reload;
+</script>
+</head>
+
+<body>
+<div id="fb-root"></div>
+
+<iframe src="http://another-host/chat" style="float:right; border:0" width="565" height="300"></iframe>
+
+<p>Updates:<ul>
+<li>9 Aug 2014: Kolom DPTb dan DPKTb sudah ditambahkan.
+<li>6 Aug 2014: <b style="background-color:yellow">Row berwarna kuning</b> bila ada TPS di dalamnya yang baru saja dientry/diedit &lt;= 1 jam yang lalu.
+<li>3 Aug 2014: Added chatting feature.
+<li>1 Aug 2014: Scan error untuk halaman 3 dan 4 bisa dilaporkan secara terpisah
+<li>1 Aug 2014: <a href="https://docs.google.com/spreadsheets/d/1hwsgjdlt1dezIeFknkLH5WgIRU4zfOSOha8OAXy1k4w/edit#gid=574778820" target="_blank">Laporan kesalahan dari Google Forms</a> line 4026 - 4177 telah di-integrate (lihat kolom comments di TPS)
+<li>27 July 2014: Kawal MK dengan membandingkan gugatan point 1 .. 4 (lihat dibawah)
+<li>21 July 2014: <a href="https://docs.google.com/spreadsheets/d/1hwsgjdlt1dezIeFknkLH5WgIRU4zfOSOha8OAXy1k4w/edit#gid=574778820" target="_blank">Laporan kesalahan dari Google Forms</a> sebanyak 4025 telah di-integrate (lihat kolom comments di TPS)
+<li>20 July 2014: <a href="https://docs.google.com/spreadsheets/d/1pQlDgrSAPPJYcnneTJ6rI8791kC6n-aKMIUIAj3iW5s/edit#gid=0" target="_blank">Nomor TPS yang bergeser</a> telah diperbaiki
+</ul>
+</p>
+
+<p>Toggle: <a href="javascript:$('#gugatan').toggle(); void(0);">Gugatan dari Tim No 1 beserta prioritas untuk entry halaman 3</a></p>
+
+<input type="checkbox" id="j1_chk" onclick="reload()" checked>J1 &nbsp;
+<input type="checkbox" id="j2_chk" onclick="reload()">J2 &nbsp;
+<input type="checkbox" id="j3_chk" onclick="reload()" checked>J3 &nbsp;
+<input type="checkbox" id="j4_chk" onclick="reload()" checked>J4 &nbsp;
+<input type="checkbox" id="j5_chk" onclick="reload()">J5 &nbsp;
+<input type="checkbox" id="j6_chk" onclick="reload()" checked>J6 &nbsp; &nbsp;
+<input type="checkbox" id="j7_chk" onclick="reload()">J7 &nbsp; &nbsp;
+
+<!-- <input type="checkbox" id="b1_chk" onclick="reload()">B1.DPT &nbsp; -->
+<input type="checkbox" id="b2_chk" onclick="reload()" checked>B2.DPTb &nbsp;
+<!-- <input type="checkbox" id="b3_chk" onclick="reload()">B3.DPK &nbsp; -->
+<input type="checkbox" id="b4_chk" onclick="reload()" checked>B4.DPKTb &nbsp; &nbsp;
+
+<br style="clear:both">
+
+
+<div id="gugatan" style="display:none">
+<p>
+<img src="/images/janggal.jpg">
+</p>
+
+<p>Point 1 sampai 4 diatas dapat dicek kebenarannya di <a href="http://scanc1.kpu.go.id/viewp.php?f=004210501003.jpg" target="_blank">halaman 3</a>:
+
+<ul>
+<li>Janggal #1: dimana B5 ≠ II4 atau B5 ≠ sah + tidak_sah
+<li>Janggal #2: dimana II4 ≠ sah + tidak_sah
+<li>Janggal #3: dimana B2 > A2 (DPTb: jumlah surat suara digunakan lebih besar dari jumlah pemilih)
+<li>Janggal #4: dimana B4 > A4 (DPKTb: jumlah surat suara digunakan lebih besar dari jumlah pemilih)
+<li>Janggal #5: dimana prabowo == 0
+<li>Janggal #6: dimana II1 - II2 - II3 ≠ II4
+</ul>
+
+Dimana:
+<ul>
+<li>Huruf A melambangkan "Data Pemilih"
+<li>Huruf B melambangkan "Pengguna Hak Pilih"
+<li>Huruf II melambangkan "Data Penggunaan Surat Suara"
+</ul>
+
+Nomor setelah huruf menyatakan baris yang dimaksud.<br>
+Contoh B5 adalah Pengguna Hak Pilih -> Jumlah Seluruh Pengguna Hak Pilih.
+
+<p>Prioritaskan digitizing halaman 3 untuk propinsi yang digugat berikut:
+<ol>
+<li>Aceh
+<li>DKI
+<li>Sumut (nias selatan)
+<li>Lampung
+<li>Jabar
+<li>Banten
+<li>Jateng (jepara, Purbalingga, kota semarang, kab. Semarang, demak)
+<li>Jatim (surabaya, Sidoarjo)
+<li>Bali (giayar)
+<li>NTT (timur tengah utara)
+<li>Sulsel (gowa, kota Makassar)
+<li>Sulbar (Mamuju, mamasa, majene, Mamuju utara, polman)
+<li>Malut (halmahera timur)
+<li>Papua barat (maybrat, Manokwari, sorong selatan, teluk wondama, raja ampat, kab sorong, tambraw, kaymana, teluk bintuni)
+<li>Papua (kota jayapura, kerom, sarmi, nabire, kep. Yapen)
+</ol>
+
+<p>Total gelembung suara bisa diapproximate = G1 + G3 + G4 dimana:
+<ul>
+<li>G1 = max(B5, II4, sah + tidak_sah) - min(B5, II4, sah + tidak_sah)
+<li>G3 = max(0, B2 - A2)
+<li>G4 = max(0, B4 - A4)
+</ul>
+
+G2 tidak diperlukan karena sudah termasuk dalam G1.
+</p>
+
+</div>
+
+<p>
+<span id="hie" style="display:inline"><a href="javascript:set_hie(0, 0); void(0);">Nasional</a></span>
+<span id="msg_status"></span>
+</p>
+
+<div id="tbl"></div>
+
+<p>
+<span id="hie2" style="display:inline"><a href="javascript:set_hie(0, 0); void(0);">Nasional</a></span>
+<span id="msg_status2"></span>
+</p>
+
+<br><br>
+
+<!-- <div
+  class="fb-like"
+  data-send="true"
+  data-width="450"
+  data-show-faces="true">
+</div>
+ -->
+
+ </body>
+</html>

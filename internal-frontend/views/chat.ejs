@@ -1,0 +1,202 @@
+<body style="margin:0px">
+<style type="text/css">
+a { text-decoration: none; }
+td { padding: 2px 5px 2px 5px; font-family: verdana; font-size:11px; }
+.scroll-down-able{ overflow-y:auto; word-wrap:break-word; }
+</style>
+
+<div id="fb-root"></div>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+<script>
+(function(d, s, id) {
+  var js, fjs = d.getElementsByTagName(s)[0];
+  if (d.getElementById(id)) return;
+  js = d.createElement(s); js.id = id;
+  js.src = "//connect.facebook.net/en_US/sdk.js#xfbml=1&appId=662471847169648&version=v2.0";
+  fjs.parentNode.insertBefore(js, fjs);
+}(document, 'script', 'facebook-jssdk'));
+
+var fb_cache = {};
+function get_fb(id, cb) {
+  if (fb_cache[id]) return cb(fb_cache[id]);
+  FB.api('/' + id, function (res) {
+    if (res.link && res.name) {
+      console.log('OK ' + id + ' -> ' + JSON.stringify(res));
+      fb_cache[id] = res;
+    } else {
+      console.log('FAIL ' + id + ' -> ' + JSON.stringify(res));
+    }
+    fb_cache[id] = res;
+    cb(res);
+  });
+}
+
+var whitelisted = false;
+
+window.fbAsyncInit = function() {
+  FB.init({
+    appId      : '118',
+    xfbml      : true,
+    cookie     : true,
+    version    : 'v2.0',
+    status     : true,
+  });
+
+  FB.getLoginStatus(function(response) {
+    if (response.status === 'connected') {
+      console.log('Connected to Facebook');
+      get_fb('me', function (res) {
+        // $.ajax('/chat/in_whitelist/' + res.id, { cache: false }).done(function(data) {
+          // whitelisted = data.received;
+          update_msgs();
+          update_whos();
+        // });
+      });
+    } else if (response.status === 'not_authorized') {
+      alert('Please log into this app.');
+    } else {
+      alert('Please log into Facebook.');
+    }
+  });
+};
+
+var ids = { kpo: 0 };
+
+function update_msgs() {
+  $.ajax('/chat/poll/' + JSON.stringify(ids), {
+    cache: false,
+    timeout: 60000,
+    error: function (xhr, status, error) {
+      console.log(status);
+      console.error(error);
+      setTimeout(update_msgs, 5000);
+    },
+    success: function (arr) {
+      var s = '';
+      for (var i = 0; i < arr.msgs.kpo.length; i++) {
+        var msg = arr.msgs.kpo[i];
+        var u = {
+          id: msg.userid,
+          name: msg.uname,
+          link: 'https://www.facebook.com/app_scoped_user_id/' + msg.userid,
+        };
+        s += '<i><b>' + gen_fb_link(u) + '</b></i>&gt; ' +
+          $('<div/>').text(msg.message).html() + '<br>';
+        ids.kpo = Math.max(ids.kpo, msg.id);
+      }
+      if (s.length > 0) {
+        var el = $('#chat_msgs')[0];
+        el.innerHTML += s;
+        el = el.parentElement;
+        el.scrollTop = el.scrollHeight;
+      }
+      setTimeout(update_msgs, 1000);
+    }
+  });
+}
+
+function duration(since) {
+  var delta = new Date().getTime() - since;
+  var dur = Math.max(0,Math.floor(delta/1000/60));
+  if (dur<60) {return dur+'m';}
+  dur = Math.floor(dur/60);
+  if(dur<24) {return dur+'h';}
+  if(dur<24*30) {return Math.floor(dur/24)+'d';}
+  return Math.floor(dur/24/30)+'M';
+}
+
+function gen_fb_link(res) {
+  return '<a href="' + res.link + '" target="_blank">' + res.name + '</a>';
+}
+
+function update_whos() {
+  $.ajax('/chat/whos_here/kpo', {
+    cache: false,
+    timeout: 60000,
+    error: function (xhr, status, error) {
+      console.log(status);
+      console.error(error);
+      relogin();
+      setTimeout(update_whos, 10000);
+    },
+    success: function (whos_here) {
+      var s = '';
+      var visible = 0;
+      var now = new Date().getTime();
+      for (var i in whos_here) {
+        if (!whos_here.hasOwnProperty(i)) continue;
+        if (i == 'count' || i == 'server') continue;
+        var u = whos_here[i];
+        if (now - u.last_contact > 3 * 60000) continue;
+
+        visible++;
+        u.link = 'https://www.facebook.com/app_scoped_user_id/' + u.id;
+        s += gen_fb_link(u) + '<br>';
+      }
+      $('#chat_users').html('-- Users(' + visible + '/' + whos_here.count + '):' + duration(whos_here.server) + '<br>' + s);
+      setTimeout(update_whos, 10000);
+    }
+  });
+}
+
+function relogin() {
+  get_fb('me', function (res) {
+    console.log('relogin for ' + res.id);
+    $('#chat_touch')[0].src = '/chat/auth/facebook/login/' + res.id;
+  });
+}
+
+$(function () {
+  var pt = $("#pt");
+  pt.on("keypress", function(e) {
+    if (e.which == 13) {
+      pt.attr('disabled', 'disabled');
+      $.ajax('/chat/post', {
+        type: 'POST',
+        cache: false,
+        dataType: 'text',
+        data: { text: pt.val() },
+        error: function (xhr, status, error) {
+          console.log(status);
+          console.error(error);
+          alert('Unable to post, please try again later');
+          pt.removeAttr('disabled');
+          pt.focus();
+        },
+        success: function (res) {
+          if (res == 'ok') {
+            pt.val('');
+          } else {
+            alert('Failed posting chat, make sure you are logged in');
+          }
+          pt.removeAttr('disabled');
+          pt.focus();
+        }
+      });
+    }
+  });
+});
+</script>
+
+<iframe id="chat_touch" style="display:none"></iframe>
+
+<table cellpadding="1" cellspacing="2" class="uhunt_chat" bgcolor="lightgrey">
+<tr>
+  <td valign="top" rowspan="2" style="border-right:1px solid #aaa;">
+    <div style="height:280px; width:135px; overflow-y:auto; word-wrap:break-word;" id="chat_users"></div>
+  </td>
+  <td valign=top>
+    <div class="scroll-down-able" style="height:250px; width:400px; scrollTop:100px;" scrollTop="100">
+      <div id="chat_msgs"></div>
+    </div>
+  </td>
+</tr>
+
+<tr>
+  <td>
+    <input type="text" id="pt" placeholder="post your message here (max 255 chars)" style="height:25px; width:400px; outline:none;">
+  </td>
+</tr>
+</table>
+
+</body>
