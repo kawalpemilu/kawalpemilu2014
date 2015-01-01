@@ -1,0 +1,9 @@
+[submodule "http-parser"]
+	path = http-parser
+	url = https://github.com/joyent/http-parser.git
+[submodule "libuv"]
+	path = libuv
+	url = https://github.com/joyent/libuv.git
+[submodule "gyp"]
+	path = gyp
+	url = https://git.chromium.org/external/gyp.git
