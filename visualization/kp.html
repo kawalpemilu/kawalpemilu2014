@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Indonesia Presidential Election Map 2014</title>
+<meta property="og:image" content="http://felix-halim.net/kp.png"/>
+<style type="text/css">
+.aggregate tr:nth-child(even) { background: #EEE; }
+.aggregate tr:nth-child(odd) { background: #FFF; }
+.aggregate tbody > tr:hover { background-color: #CCF; }
+.aggregate thead > tr:first-child,
+.aggregate tbody > tr:last-child { background-color: #CCC; }
+.aggregate td { padding: 2px 5px 2px 5px; font-family: verdana; font-size:10px; }
+.aggregate thead > tr > th { padding:0; margin:0; }
+#googft-legend{background-color:#fff;border:1px solid #000;font-family:Arial, sans-serif;font-size:12px;margin:5px;padding:10px 10px 8px;}#googft-legend p{font-weight:bold;margin-top:0;}#googft-legend div{margin-bottom:5px;}.googft-legend-swatch{border:1px solid;float:left;height:12px;margin-right:8px;width:20px;}.googft-legend-range{margin-left:0;}.googft-dot-icon{margin-right:8px;}.googft-paddle-icon{height:24px;left:-8px;margin-right:-8px;position:relative;vertical-align:middle;width:24px;}.googft-legend-source{margin-bottom:0;margin-top:8px;}.googft-legend-source a{color:#666;font-size:11px;}
+</style>
+<script type="text/javascript" src="https://maps.google.com/maps/api/js?sensor=false&v=3"></script>
+<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+<script type="text/javascript">
+// Author: Felix Halim (felix.halim@gmail.com)
+var ft_data_table_id = '1V2Xlh3GGybS8gk064II-Hm3tvHjfKKLNaIWTvBUY';  // https://www.google.com/fusiontables/data?docid=1V2Xlh3GGybS8gk064II-Hm3tvHjfKKLNaIWTvBUY
+var ft_names_table_id = '1Nj101u_OLbgOjh5Stzmxng3i2V-7jVJrbyUTSQDZ';  // https://www.google.com/fusiontables/data?docid=1Nj101u_OLbgOjh5Stzmxng3i2V-7jVJrbyUTSQDZ
+
+var ft_prop_table_id = '1qUZPhKrg8udhQBtcVfb7ZvW6jScCqygI6-UUuJHu';
+var ft_kab_table_id = '1QDDRfgqcsi8_fYREIxt8VhHlWNaVIWGKz5644ONP';
+var ft_kec_table_id = '1Zvh6bejgz1eI2pwp-S-dyYcoAhmqefHe2yuVMGoc';
+var ft_kel_table_id = '1njv7vTxsE7sr6EJ7Q9RBmKnlHAHyXvEY8VtKEXNW';
+
+var hie = [0,1,2,3,4];
+var ids2names = { '0': 'Nasional' };
+
+function query(sql, callback) {
+  $.ajax('https://www.googleapis.com/fusiontables/v2/query?sql=' + sql + '&key=AIzaSyB-m0tcr2hNfSEhV-RziqGObSFaDMIsc58', {
+    cache: false,
+    error: function (xhr, status, error) {
+      console.log(status);
+      console.error(error);
+    },
+    success: callback
+  });
+}
+
+function set_hie(depth, parent, update_map) {
+  hie.length = depth + 1;
+  hie[depth] = parent;
+
+  if (depth == 4) {
+    display_tps(parent);
+  } else {
+    display_aggregate(depth);
+  }
+
+  if (update_map) reposition_map(depth);
+  update_polygon_selection(depth);
+
+  var s = '';
+  var t = '';
+  var resolve_names = [];
+  for (var i = 0; i < hie.length; i++) {
+    if (i > 0) { s += ' &raquo; '; t += ' > '; }
+    if (!ids2names[hie[i]]) resolve_names.push(hie[i]);
+    s += '<a href="javascript:set_hie(' + i + ', ' + hie[i] + ', true); void(0);" class="fixnames">' + (ids2names[hie[i]] ? ids2names[hie[i]] : hie[i]) + '</a>';
+    t += ids2names[hie[i]];
+  }
+  if (resolve_names.length > 0) fetch_names(resolve_names);
+
+  $('#hie').html(s);
+  $('#hie2').html(s);
+  // document.title = t;
+  var ht = '0';
+  for (var i = 1; i <= depth; i++) {
+    ht += '.' + hie[i];
+  }
+  history.pushState(null, null, '#' + ht);
+  return depth < 4;
+}
+
+function format(number) {
+  if (number == 0) return '0';
+  var nres = '' + number;
+  var res = '';
+  for (var i = 0; i < nres.length; i++) {
+    if (i > 0 && i % 3 == 0) {
+      res = '.' + res;
+    }
+    res = nres[nres.length - i - 1] + res;
+  }
+  return res;
+}
+
+function prefix_padd(num, cnt) {
+  num = num + '';
+  while (num.length < cnt) num = '0' + num;
+  return num;
+}
+
+function image_filename(p, t, h) {
+  return prefix_padd(p, 7) + prefix_padd(t, 3) + prefix_padd(h, 2);
+}
+
+function input_box(parent, tps_no, reported_by, entered_by) {
+  return '<br><br>Data belum dimasukkan';
+}
+
+function gen_values(parent, reported_by, tps_no, prabowo, jokowi, valid, invalid, entered_by, max_dpt) {
+  var siluman = (max_dpt && valid + invalid > max_dpt) ? (' (' + (valid + invalid - max_dpt)) + ' siluman)' : '';
+  return '<table>' +
+    '<tr><td>Prabowo:<td id="tps_id1_' + tps_no + '">' + prabowo +
+    '<tr><td>Jokowi:<td id="tps_id2_' + tps_no + '">' + jokowi +
+    '<tr><td>Suara sah:<td id="tps_id3_' + tps_no + '" ' + (prabowo + jokowi == valid ? '' : 'bgcolor=magenta') +'>' + valid +
+    '<tr><td>Tidak sah:<td id="tps_id4_' + tps_no + '">' + invalid +
+    '<tr><td colspan=2>&nbsp;' +
+    '<tr><td>Max DPT:<td id="tps_id5_' + tps_no + '" ' + (siluman ? 'bgcolor=magenta' : '') + '>' +
+       (max_dpt ? max_dpt : '?') + siluman +
+    '<tr><td>Entered by: &nbsp; <td id="input_box_'+ tps_no +'" align=center>' +
+      '<span class="fbguy">' + entered_by + '</span>' +
+    '<tr height=80><th colspan=2><br><br>' +
+  '</table>';
+}
+
+function display_tps(parent) {
+  var key_col = 'col4';
+  var WHERE_CLAUSE = '';
+  for (var i = 0; i < 4; i++) {
+    if (i == 0) WHERE_CLAUSE += 'WHERE ';
+    if (i > 0) WHERE_CLAUSE += 'AND ';
+    WHERE_CLAUSE += 'col' + i + '=' + hie[i + 1] + ' ';
+  }
+  var sql = 'SELECT * FROM ' + ft_data_table_id + ' ' + WHERE_CLAUSE + ' ORDER BY col4';
+  console.log(sql);
+
+  $('#msg_status').html('Fetching ...');
+  $('#msg_status2').html('Fetching ...');
+
+  query(sql, function(res) {
+    var data = res.rows;
+    $('#msg_status').html('');
+    $('#msg_status2').html('');
+    var s = '<table border="1"><thead><tr>\
+      <th width="60">TPS\
+      <th width="200">C1 pindai penuh\
+      <th width="200">Halaman 4\
+      <th width="200">Nilai urun daya' +
+    '</thead><tbody>';
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      var tps_no = r[4];
+      var prabowo = parseInt(r[5]);
+      var jokowi = parseInt(r[6]);
+      var sah = parseInt(r[7]);
+      var tak_sah = parseInt(r[8]);
+      var max_dpt = 999;
+      var has_scan = 1;
+      var has_error = 0;
+      var entered_by = 1;
+      var report4 = 0;
+      var num3 = image_filename(parent, tps_no, 3);
+      var num = image_filename(parent, tps_no, 4);
+      var num1 = image_filename(parent, tps_no, 1);
+      var num2 = image_filename(parent, tps_no, 2);
+      s += '<tr><td>#' + tps_no + '<br><br>' +
+        '<td style="padding:15px" align=center>' +
+          '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + image_filename(parent, tps_no, 1) + '.jpg" target="_blank">Hal 1</a><br><br>' +
+          '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + image_filename(parent, tps_no, 2) + '.jpg" target="_blank">Hal 2</a><br><br>' +
+          '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + image_filename(parent, tps_no, 3) + '.jpg" target="_blank">Hal 3</a><br><br>' +
+          '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + image_filename(parent, tps_no, 4) + '.jpg" target="_blank">Hal 4</a><br><br>' +
+          '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + image_filename(parent, tps_no, 5) + '.jpg" target="_blank">Hal 5</a><br><br>' +
+        '<td style="padding:15px" align=center ' + (report4 ? 'bgcolor=#ffaaaa' : '') + ' id="hal4scan_'+ tps_no+'">' +
+          '<a href="http://scanc1.kpu.go.id/viewp.php?f=' + num + '.jpg" target="_blank">' +
+          '<div style="width: 200px; height: 250px; overflow: hidden;">' +
+            '<img style="position: relative; left: -450px; top: -130px;" width="600" src="http://scanc1.kpu.go.id/viewp.php?f=' + num + '.jpg"></div></a>' +
+        '<td align=center ' + (has_error ? 'bgcolor=#ffaaaa' : '') + ' id="csval_'+ tps_no +'">' + (has_scan ? (!entered_by ? input_box(parent, tps_no, has_error, entered_by) :
+          gen_values(parent, has_error, tps_no, prabowo, jokowi, sah, tak_sah, entered_by, max_dpt)) : 'N / A');
+    }
+    document.getElementById('tbl').innerHTML = s + '</tbody></table>';
+  });
+}
+
+function percent(rat) {
+  if (isNaN(rat)) return '0.00';
+  var p = Math.floor(rat * 10000);
+  return Math.floor(p / 100) + '.' + prefix_padd(p % 100, 2);
+}
+
+function fetch_names(ids) {
+  var no_ids = [];
+  for (var i = 0; i < ids.length; i++) {
+    if (!ids2names[ids[i]]) {
+      no_ids.push(ids[i]);
+    }
+  }
+  if (no_ids.length == 0) return;
+
+  var sql = 'SELECT * FROM ' + ft_names_table_id + ' WHERE col0 in (' + no_ids.join(', ') + ')';
+  query(sql, function(res) {
+    var data = res.rows;
+    // console.log(data);
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      ids2names[r[0]] = r[1];
+    }
+    $("a.fixnames").each(function (i, el) {
+      var id = $(el).html();
+      if (ids2names[id]) $(el).html(ids2names[id]);
+    });
+  });
+}
+
+function display_aggregate_kel(id) {
+  var sql = "SELECT Propinsi, Kabupaten, Kecamatan, Kelurahan FROM " + ft_data_table_id + " WHERE Kelurahan = " + id + " LIMIT 1";
+  query(sql, function(res) {
+    var data = res.rows;
+    console.log(data);
+    hie = [0, data[0][0], data[0][1], data[0][2]];
+    set_hie(4, parseInt(data[0][3]), false);
+  });
+}
+
+function display_aggregate_kec(id) {
+  var sql = "SELECT Propinsi, Kabupaten, Kecamatan FROM " + ft_data_table_id + " WHERE Kecamatan = " + id + " LIMIT 1";
+  query(sql, function(res) {
+    var data = res.rows;
+    console.log(data);
+    hie = [0, data[0][0], data[0][1]];
+    set_hie(3, parseInt(data[0][2]), false);
+  });
+}
+
+function display_aggregate_kab(id) {
+  var sql = "SELECT Propinsi, Kabupaten FROM " + ft_data_table_id + " WHERE Kabupaten = " + id + " LIMIT 1";
+  query(sql, function(res) {
+    var data = res.rows;
+    console.log(data);
+    hie = [0, data[0][0]];
+    set_hie(2, parseInt(data[0][1]), false);
+  });
+}
+
+function display_aggregate_prop(id) {
+  hie = [0];
+  set_hie(1, parseInt(id), false);
+}
+
+function fetch_geometries(depth, callback) {
+  var tables = [0, ft_prop_table_id, ft_kab_table_id, ft_kec_table_id, ft_kel_table_id];
+  var attr = ['', 'Propinsi', 'Kabupaten', 'Kecamatan', 'Kelurahan'];
+  var sql = "SELECT geometry FROM " + tables[depth] + " WHERE " + attr[depth] + " = " + hie[depth] + " LIMIT 1";
+  console.log(sql);
+
+  query(sql, function(res) {
+    // console.log(res);
+    if (!res.rows[0][0].geometries) {
+      if (res.rows[0][0].geometry) {
+        res.rows[0][0].geometries = [res.rows[0][0].geometry];
+      }
+    }
+    callback(res.rows[0][0].geometries);
+  });
+}
+
+function reposition_map(depth) {
+  if (depth == 0) {
+    gmap.setCenter(gmap_init_options.center);
+    gmap.setZoom(gmap_init_options.zoom);
+  } else if (depth <= 4) {
+    fetch_geometries(depth, center_map);
+  }
+}
+
+function update_polygon_selection(depth) {
+  if (depth == 0) {
+    select_polygon(null);
+  } else if (depth <= 4) {
+    fetch_geometries(depth, select_polygon);
+  }
+}
+
+function display_aggregate(depth) {
+  var key_col = 'col' + depth;
+  var WHERE_CLAUSE = '';
+  for (var i = 0; i < depth; i++) {
+    if (i == 0) WHERE_CLAUSE += 'WHERE ';
+    if (i > 0) WHERE_CLAUSE += 'AND ';
+    WHERE_CLAUSE += 'col' + i + '=' + hie[i + 1] + ' ';
+  }
+  var sql = 'SELECT ' + key_col + ',SUM(col5),SUM(col6),SUM(col7),SUM(col8) ' +
+      'FROM ' + ft_data_table_id + ' ' +
+       WHERE_CLAUSE +
+      'GROUP BY ' + key_col;
+
+  console.log(sql);
+
+  $('#msg_status').html('Fetching ...');
+  $('#msg_status2').html('Fetching ...');
+  query(sql, function( res ) {
+    $('#msg_status').html('');
+    $('#msg_status2').html('');
+
+    var data = res.rows;
+    // console.log(data);
+
+    var s = '<table class="aggregate" border="0" cellspacing="2"><thead><tr>\
+      <th rowspan=2 width="40">No\
+      <th rowspan=2 width="225">Tempat\
+      <th rowspan=2 width="120" colspan="2">Prabowo-Hatta\
+      <th rowspan=2 width="120" colspan="2">Jokowi-JK\
+      <th rowspan=2 width="120">Suara sah\
+      <th rowspan=2 width="80">Tidak sah\
+    </thead><tbody>';
+
+    var total = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    var now = new Date().getTime() / 1000;
+    var resolve_names = [];
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      var prabowo_count = r[1] = parseInt(r[1]);
+      var jokowi_count = r[2] = parseInt(r[2]);
+      var valid_count = r[3] = parseInt(r[3]);
+      var invalid_count = r[4] = parseInt(r[4]);
+      var delta_sah = valid_count - (prabowo_count + jokowi_count);
+      var prabowo_percent = percent(prabowo_count / (prabowo_count + jokowi_count)) + '%';
+      var jokowi_percent = percent(jokowi_count / (prabowo_count + jokowi_count)) + '%';
+      for (var j = 1; j <= 35; j++) total[j] += r[j];
+
+      resolve_names.push(r[0]);
+      s += '<tr><td align=center>' + (i + 1) +
+        '<td><a href="javascript:set_hie(' + (depth + 1) + ',' + r[0] +', true); void(0);" class="fixnames">' + (ids2names[r[0]] ? ids2names[r[0]] : r[0]) + '</a>' +
+        '<td align=right width=60>' + format(prabowo_count) +
+        '<td align=right ' + (prabowo_count > jokowi_count ? "bgcolor=lightgreen" : "") + '>' + prabowo_percent +
+        '<td align=right width=60>' + format(jokowi_count) +
+        '<td align=right ' + (prabowo_count < jokowi_count ? "bgcolor=lightgreen" : "") + '>' + jokowi_percent +
+        '<td align=right ' + (delta_sah ? 'bgcolor=lightpink' : '') +'>' +
+          (delta_sah ? ('(' + delta_sah + ') ') : '') + format(valid_count) +
+        '<td align=right>' + format(invalid_count);
+    }
+    fetch_names(resolve_names);
+
+    var prabowo_count = total[1];
+    var jokowi_count = total[2];
+    var valid_count = total[3];
+    var invalid_count = total[4];
+    var delta_sah = valid_count - (prabowo_count + jokowi_count);
+    var prabowo_percent = percent(prabowo_count / (prabowo_count + jokowi_count)) + '%';
+    var jokowi_percent = percent(jokowi_count / (prabowo_count + jokowi_count)) + '%';
+    s += '<tr><td>&nbsp;' +
+      '<th align="right">TOTAL: &nbsp; ' +
+      '<td align=right width=60>' + format(prabowo_count) +
+      '<td align=right ' + (prabowo_count > jokowi_count ? "bgcolor=lightgreen" : "") + '>' + prabowo_percent +
+      '<td align=right width=60>' + format(jokowi_count) +
+      '<td align=right ' + (prabowo_count < jokowi_count ? "bgcolor=lightgreen" : "") + '>' + jokowi_percent +
+      '<td align=right ' + (delta_sah ? 'bgcolor=lightpink' : '') +'>' +
+        (delta_sah ? ('(' + delta_sah + ') ') : '') + format(valid_count) +
+      '<td align=right>' + format(invalid_count) +
+      '</tbody></table>';
+
+    $('#tbl').html(s);
+  });
+}
+
+function reload() {
+  if (location.hash == '#_=_' || location.hash == "") {
+    location.hash = '#0';
+  }
+  var arr = location.hash.substr(1).split('.');
+  var resolve = [];
+  for (var i = 0; i < arr.length; i++) {
+    if (!ids2names[arr[i]]) resolve.push(arr[i]);
+    hie[i] = parseInt(arr[i]);
+  }
+  if (resolve.length > 0) fetch_names(resolve);
+  var depth = arr.length - 1;
+  set_hie(depth, arr[depth], true);
+}
+
+window.onhashchange = reload;
+
+
+
+var gmap;
+var gmap_init_options = {
+  center: new google.maps.LatLng(-2.7, 117),
+  zoom: 5,
+};
+var selected_polygons = [], polygon_options = {
+  strokeColor: 'yellow',
+  // strokeOpacity: 0.8,
+  strokeWeight: 2,
+  // fillColor: '#FF0000',
+  fillOpacity: 0.0,
+  clickable: false,
+};
+
+function select_polygon(geometries) {
+  while (selected_polygons.length > 0) {
+    selected_polygons.pop().setMap(null);;
+  }
+
+  if (!geometries) return;
+
+  for (var i = 0; i < geometries.length; i++) {
+    var c = geometries[i].coordinates[0];
+    var paths = [];
+    for (var j = 0; j < c.length; j++) {
+      var p = new google.maps.LatLng(c[j][1], c[j][0]);
+      paths.push(p);
+    }
+    var poly = new google.maps.Polygon(polygon_options);
+    poly.setPaths(paths);
+    poly.setMap(gmap);
+    selected_polygons.push(poly);
+  }
+}
+
+function center_map(geometries) {
+  if (!geometries) return;
+
+  var bounds = new google.maps.LatLngBounds();
+  for (var i = 0; i < geometries.length; i++) {
+    var c = geometries[i].coordinates[0];
+    for (var j = 0; j < c.length; j++) {
+      var p = new google.maps.LatLng(c[j][1], c[j][0]);
+      // console.log(JSON.stringify(c[j]) + " " + JSON.stringify(p));
+      bounds.extend(p);
+    }
+  }
+  gmap.fitBounds(bounds);
+}
+
+google.maps.event.addDomListener(window, 'load', function () {
+  var prop_layer = new google.maps.FusionTablesLayer({
+    query: { select: "", from: ft_prop_table_id, where: ""},
+    options: { styleId: 2, templateId: 2 }
+  });
+  google.maps.event.addListener(prop_layer, 'click', function(e) {
+    display_aggregate_prop(e.row.Propinsi.value);
+  });
+
+  var kab_layer = new google.maps.FusionTablesLayer({
+    query: { select: "", from: ft_kab_table_id, where: "" },
+    options: { styleId: 2, templateId: 2 }
+  });
+  google.maps.event.addListener(kab_layer, 'click', function(e) {
+    display_aggregate_kab(e.row.Kabupaten.value);
+  });
+
+  var kec_layer = new google.maps.FusionTablesLayer({
+    query: { select: "", from: ft_kec_table_id, where: "" },
+    options: { styleId: 2, templateId: 2 }
+  });
+  google.maps.event.addListener(kec_layer, 'click', function(e) {
+    display_aggregate_kec(e.row.Kecamatan.value);
+  });
+
+  var kel_layer = new google.maps.FusionTablesLayer({
+    query: { select: "", from: ft_kel_table_id, where: "" },
+    options: { styleId: 2, templateId: 2 }
+  });
+  google.maps.event.addListener(kel_layer, 'click', function(e) {
+    display_aggregate_kel(e.row.Kelurahan.value);
+  });
+
+  gmap = new google.maps.Map(document.getElementById('googft-mapCanvas'), gmap_init_options);
+  gmap.controls[google.maps.ControlPosition.RIGHT_BOTTOM].push(document.getElementById('googft-legend-open'));
+  gmap.controls[google.maps.ControlPosition.RIGHT_BOTTOM].push(document.getElementById('googft-legend'));
+
+  google.maps.event.addListener(gmap, 'zoom_changed', function() {
+    update_map(gmap.getZoom());
+  });
+  update_map(gmap.getZoom());
+
+  gmap.setOptions({styles: [
+    {
+      featureType: 'landscape',
+      stylers: [
+        { color: "#ffffff" },
+      ]
+    },
+    {
+      featureType: 'poi',
+      stylers: [
+        { color: "#ffffff" },
+      ]
+    },
+  ]});
+
+  function update_map(zoom_level) {
+    if (zoom_level > 12) {
+      prop_layer.setMap(null);
+      kab_layer.setMap(null);
+      kec_layer.setMap(null);
+      kel_layer.setMap(gmap);
+    } else if (zoom_level > 7) {
+      prop_layer.setMap(null);
+      kab_layer.setMap(null);
+      kec_layer.setMap(gmap);
+      kel_layer.setMap(null);
+    } else if (zoom_level > 5) {
+      prop_layer.setMap(null);
+      kab_layer.setMap(gmap);
+      kec_layer.setMap(null);
+      kel_layer.setMap(null);
+    } else {
+      prop_layer.setMap(gmap);
+      kab_layer.setMap(null);
+      kec_layer.setMap(null);
+      kel_layer.setMap(null);
+    }
+  }
+
+  reload();
+
+  // Warmup kabupaten and kecamatan tables.
+  query('SELECT * FROM ' + ft_kab_table_id + ' LIMIT 1', function (res) { console.log(res.rows.length); });
+  query('SELECT * FROM ' + ft_kec_table_id + ' LIMIT 1', function (res) { console.log(res.rows.length); });
+});
+
+</script>
+</head>
+
+<body>
+<div id="googft-mapCanvas" style="height:600px;"></div>
+
+<p>
+<span id="hie" style="display:inline"><a href="javascript:set_hie(0, 0, true); void(0);">Nasional</a></span>
+<span id="msg_status"></span>
+</p>
+
+<div id="tbl"></div>
+
+<p>
+<span id="hie2" style="display:inline"><a href="javascript:set_hie(0, 0, true); void(0);">Nasional</a></span>
+<span id="msg_status2"></span>
+</p>
+
+<input id="googft-legend-open" style="display:none" type="button" value="Legend"></input>
+<div id="googft-legend">
+  <p id="googft-legend-title">Color Legend</p>
+  <div>
+    <span class="googft-legend-swatch"style="background-color: #ff00ff"></span>
+    <span class="googft-legend-range">Prabowo / Hatta</span>
+  </div>
+  <div>
+    <span class="googft-legend-swatch"style="background-color: #00ff00"></span>
+    <span class="googft-legend-range">Jokowi / JK</span>
+  </div>
+  <input id="googft-legend-close" style="display:none" type="button" value="Hide"></input>
+</div>
+
+<hr>
+<p>The data source for number of votes is taken from <a href="http://kawalpemilu.org" target="_blank">KawalPemilu.org</a> and imported into <a href="https://www.google.com/fusiontables/data?docid=1V2Xlh3GGybS8gk064II-Hm3tvHjfKKLNaIWTvBUY" target="_blank">Google Fusion Tables</a>.
+
+<p>The data source for the administrative boundary map is taken from <a href="https://github.com/pemiluAPI/pemilu-data/tree/master/dapil/shapefiles/" target="_blank">PemiluAPI</a>.
+
+<p>I manually reconcile the IDs from shapefiles in the PemiluAPI with the IDs from KawalPemilu.org.
+
+<p>The datasets for each level of administration (for more details, click File -> About this table):
+
+<ul>
+<li><a href="https://www.google.com/fusiontables/data?docid=1qUZPhKrg8udhQBtcVfb7ZvW6jScCqygI6-UUuJHu#rows:id=1" target="_blank">Province</a>
+<li><a href="https://www.google.com/fusiontables/data?docid=1QDDRfgqcsi8_fYREIxt8VhHlWNaVIWGKz5644ONP#rows:id=1" target="_blank">Regency</a>
+<li><a href="https://www.google.com/fusiontables/data?docid=1Zvh6bejgz1eI2pwp-S-dyYcoAhmqefHe2yuVMGoc#rows:id=1" target="_blank">District</a>
+<li><a href="https://www.google.com/fusiontables/data?docid=1njv7vTxsE7sr6EJ7Q9RBmKnlHAHyXvEY8VtKEXNW#rows:id=1" target="_blank">Village</a> (only Surakarta is available)
+</ul>
+
+<br><br>
+</body>
+</html>
