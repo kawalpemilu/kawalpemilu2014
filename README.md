@@ -4,7 +4,7 @@
 
 The Indonesian presidential election 2014 was held on 9 July. The [quick count](http://en.wikipedia.org/wiki/Quick_count)
 results on that day were inconclusive (see [the summary by Prof. Merlyna Lim](http://on.fb.me/1kb1y7O)).
-To help clear the confusion and fear of vote manipulations, [kawalpemilu.org](https://kawalpemilu.org) is
+To help clear the confusion and fear of vote manipulations, [kawalpemilu.org](https://2014.kawalpemilu.org) is
 set up. This solution was only possible because all the polling station (**TPS**)
 data (**C1 scans**) were openly available by the national election commission (**KPU**)
 for public scrutiny and verification.
